@@ -6,7 +6,6 @@ import math
 import time
 import cPickle as pickle
 
-
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
@@ -43,6 +42,10 @@ parser.add_argument('--conditional_gan', type=int, default=1, help='1 to use con
 opt = parser.parse_args()
 print(opt)
 
+
+comments = str(raw_input("Any comments? "))
+
+
 n_cond_params = nparam_dict[opt.sample_type] if opt.conditional_gan else 0
 
 cuda = True if torch.cuda.is_available() else False
@@ -58,9 +61,9 @@ def draw_true_samples(nsamp, samp_type='2d_gaussian', *argv):
 
 	'''For 2d_gaussian, *argv arguments are mu_0, mu_1, sig_1, sig_2, rho'''
 	if samp_type=='2d_gaussian':
-		mus = np.random.choice(np.linspace(-1, 1, 10), size=2)
-		sigs = np.random.choice(np.linspace(0.01, 2, 10), size=2)
-		rho = np.random.choice(np.linspace(-1, 1, 10))
+		mus = np.random.choice(np.linspace(-1, 1, 5), size=2)
+		sigs = np.random.choice(np.linspace(0.01, 2, 5), size=2)
+		rho = np.random.choice(np.linspace(-1, 1, 5))
 		
 		cov = np.array([[sigs[0]**2, rho*sigs[0]*sigs[1]],[rho*sigs[0]*sigs[1], sigs[1]**2]])
 		
@@ -68,9 +71,6 @@ def draw_true_samples(nsamp, samp_type='2d_gaussian', *argv):
 		
 		s = torch.from_numpy(np.column_stack((np.random.multivariate_normal(mus, cov, nsamp), conditional_params)))
 		conditional_params = torch.from_numpy(conditional_params)
-
-		# print s
-	
 
 	elif samp_type=='1d_gaussian':
 		if len(argv)==0:
@@ -134,6 +134,9 @@ def main():
 	optG = torch.optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 	lossD_vals, lossG_vals = [],[]
 
+	times = np.zeros((5, opt.n_iterations))
+
+
 	# wasserstein gan objective for now
 	objective = objective_wgan
 
@@ -144,9 +147,14 @@ def main():
 	for i in xrange(opt.n_iterations):
 
 		# training for discriminator with opt.extraD updates per one generator update
+
+		dt0, dt1, dt2, dt3, dt4 = [0 for x in xrange(5)]
+
 		for j in xrange(opt.extraD+1):
 			
+			t0 = time.clock()
 			real, cond_params = draw_true_samples(opt.batch_size, samp_type=opt.sample_type)
+			dt0 += time.clock()-t0
 
 			if opt.verbosity > 1:
 				print 'conditional parameters:', real[0, 1:]
@@ -159,25 +167,41 @@ def main():
 				if opt.verbosity > 1:
 					print 'gen_input has shape', gen_input.shape
 			
+			t1 = time.clock()
 			fake = netG(gen_input)
-			
+			dt1 += time.clock()-t1
+
 			if opt.verbosity > 1:
 				print 'fake has shape', fake.shape
 
 			fake = torch.cat((fake, cond_params), 1)
 
 			if j < opt.extraD:
+
+				t2 = time.clock()
 				optD.zero_grad()
 				lossD = objective(netD(real), netD(fake)) # calculate the loss function
+				dt2 += time.clock()-t2
+
+				t3 = time.clock()
 				gradD = grad(lossD * opt.batch_size, fake, create_graph=True)[0] 
 				reguD = gradD.norm(2, 1).clamp(1).mean()
+				dt3 += time.clock()-t3
+
+				t4 = time.clock()
 				(lossD + lamD * reguD).backward() # backward prop with some regularization
 				optD.step()
+				dt4 += time.clock()-t3
 			else:
+				t2 = time.clock()
 				optG.zero_grad()
 				lossG = - objective(netD(real), netD(fake))
+				dt2 += time.clock()-t2
+
+				t4 = time.clock()
 				(lossG).backward()
 				optG.step()
+				dt4 += time.clock() - t4
  		
 
 		# save losses from the last iteration
@@ -192,18 +216,32 @@ def main():
 			print -1*lossD.item()
 			print 'lossG'
 			print lossG.item()
-    
 
+		times[0, i] = dt0
+		times[1, i] = dt1
+		times[2, i] = dt2
+		times[3, i] = dt3
+		times[4, i] = dt4
+
+    
 	new_dir, frame_dir = create_directories(timestr)
 	
 	plot_loss_iterations(lossD_vals, lossG_vals, new_dir)
 
+	plot_comp_resources(times, new_dir)	
+
 	save_nn(netG, new_dir+'/netG')
+	save_nn(netD, new_dir+'/netD')
 
-	save_params(new_dir, opt.sample_type)
+
+	save_params(new_dir, opt)
+
+	with open(new_dir+'/comments.txt', 'w') as p:
+		p.write(comments)
+		p.close()
 
 
-# execute program     
+##### Execute program ########    
 main()
 
 

@@ -17,6 +17,9 @@ import matplotlib.pyplot as plt
 nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':2, 'grid':2})
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
 
+base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+
+
 def create_directories(time_string):
     new_dir = base_dir+time_string
     if not os.path.isdir(new_dir):
@@ -36,12 +39,12 @@ def objective_wgan(fakeD, realD):
 def save_nn(model, path):
     torch.save(model.state_dict(), path)
 
-def save_params(dir, sample_type):
+def save_params(dir, opt):
     # save parameters as dictionary, then pickle them to txt file
     param_dict = vars(opt)
     print param_dict
-    param_dict['n_cond_params'] = n_cond_params
-    param_dict['n_out'] = outparam_dict[sample_type]
+    param_dict['n_cond_params'] = nparam_dict[opt.sample_type]
+    param_dict['n_out'] = outparam_dict[opt.sample_type]
     with open(dir+'/params.txt', 'w') as file:
         file.write(pickle.dumps(param_dict))
 
@@ -57,6 +60,15 @@ def init_loss(loss_func):
         adversarial_loss = torch.nn.l1_loss()
     return adversarial_loss
 
+def plot_comp_resources(timearray, directory):
+
+    labels = ['Sample Drawing', 'Generator', 'Discriminator + Loss', 'Gradient', 'Backprop/Update']
+    timesum = np.sum(timearray, axis=1)
+
+    plt.figure()
+    plt.pie(timesum, labels=labels, autopct='%1.1f%%', shadow=True)
+    plt.savefig(directory+'/comp_resources.png', bbox_inches='tight')
+    plt.close()
 
 def plot_loss_iterations(lossD_vals, lossG_vals, directory):
     n = len(lossD_vals)
