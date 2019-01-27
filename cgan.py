@@ -20,13 +20,14 @@ Device = 'cpu'
 nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':2, 'grid':2})
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
 lamD = 10.
+
 base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
 timestr = time.strftime("%Y%m%d-%H%M%S")
 # parse initial parameters, set to default if parameters left unspecified
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--n_iterations', type=int, default=1000, help='number of iterations in training')
-parser.add_argument('--batch_size', type=int, default=256, help='size of the batches')
+parser.add_argument('--batch_size', type=int, default=64, help='size of the batches')
 parser.add_argument('--n_hidden', type=int, default=512)
 parser.add_argument('--n_layers', type=int, default=3)
 parser.add_argument('--extraD', type=int, default=10)
@@ -39,6 +40,11 @@ parser.add_argument('--loss_func', type=str, default='MSE', help='type of loss f
 parser.add_argument('--sample_type', type=str, default='1d_gaussian', help='type of distribution to learn')
 parser.add_argument('--verbosity', type=int, default=0, help='Verbosity level')
 parser.add_argument('--conditional_gan', type=int, default=1, help='1 to use conditional GAN, 0 otherwise')
+parser.add_argument('--gamma', type=float, default=1.0, help='Regularizing parameter for Roth GAN')
+parser.add_argument('--sampling_method', type=str, default='Unif', help='Uniform (Unif) sampling or Latin Hypercube (LH) sampling on params during training')
+parser.add_argument('--ngrid', type=int, default=10, help='number of partitions for each parameter when doing Latin Hypercube sampling')
+
+
 opt = parser.parse_args()
 print(opt)
 
@@ -57,28 +63,44 @@ if opt.verbosity > 0:
 	print 'Cuda: ', cuda
 
 
-def draw_true_samples(nsamp, samp_type='2d_gaussian', *argv):
+mu_range = np.linspace(-1, 1, opt.ngrid)
+sig_range = np.linspace(0.1, 2, opt.ngrid)
+array_list = [mu_range, sig_range, mu_range, sig_range, mu_range]
+
+
+def draw_true_samples(nsamp, samp_type='2d_gaussian', LH=None):
 
 	'''For 2d_gaussian, *argv arguments are mu_0, mu_1, sig_1, sig_2, rho'''
 	if samp_type=='2d_gaussian':
-		mus = np.random.choice(np.linspace(-1, 1, 5), size=2)
-		sigs = np.random.choice(np.linspace(0.01, 2, 5), size=2)
-		rho = np.random.choice(np.linspace(-1, 1, 5))
+		if LH is not None:
+			samp = LH[np.random.randint(LH.shape[0])]
+			mus = np.array([samp[0], samp[2]])
+			sigs = np.array([samp[1], samp[3]])
+			rho = np.array([samp[4]])
+		else:
+			mus = np.random.choice(np.linspace(-1.0, 1.0, 10), size=2)
+			sigs = np.random.choice(np.linspace(0.01, 2, 10), size=2)
+			rho = np.random.choice(np.linspace(-1, 1, 10))
 		
 		cov = np.array([[sigs[0]**2, rho*sigs[0]*sigs[1]],[rho*sigs[0]*sigs[1], sigs[1]**2]])
 		
-		conditional_params = np.column_stack((np.full(nsamp, mus[0]), np.full(nsamp, mus[1]), np.full(nsamp, sigs[0]), np.full(nsamp, sigs[1]), np.full(nsamp, rho)))
+		conditional_params = np.column_stack((np.full(nsamp, mus[0]),  np.full(nsamp, sigs[0]), np.full(nsamp, mus[1]), np.full(nsamp, sigs[1]), np.full(nsamp, rho)))
 		
 		s = torch.from_numpy(np.column_stack((np.random.multivariate_normal(mus, cov, nsamp), conditional_params)))
 		conditional_params = torch.from_numpy(conditional_params)
 
 	elif samp_type=='1d_gaussian':
-		if len(argv)==0:
-			mu = np.random.choice(np.linspace(-1, 1, 10))
-			sig = np.random.choice(np.linspace(0.01, 2, 10))
+		if LH is not None:
+			samp = LH[np.random.randint(LH.shape[0])]
+			# print 'sample:', samp
+			# samp = np.random.choice(LH)
+			mu = samp[0]
+			sig = samp[1]
 		else:
-			mu = argv[0]
-			sig = argv[1]
+			mu = np.random.choice(np.linspace(-1.0, 1.0, 8))
+			sig = np.random.choice(np.linspace(0.1, 2, 8))
+			# log spaced bins
+			# sig = np.random.choice(np.exp(np.linspace(-3, np.log(3), 20)))
 
 		s = np.column_stack((np.random.normal(mu, sig, nsamp), np.full(nsamp, mu), np.full(nsamp, sig)))
 		conditional_params = np.column_stack((np.full(nsamp, mu), np.full(nsamp, sig)))
@@ -111,7 +133,7 @@ def draw_true_samples(nsamp, samp_type='2d_gaussian', *argv):
 		conditional_params = torch.cat((k,std), 0)
 		s = torch.randn(nsamp, 2) * std + m[i]
 
-	return s.float(), conditional_params.float()
+	return s.float().requires_grad_(True), conditional_params.float()
 
 
 
@@ -138,7 +160,19 @@ def main():
 
 
 	# wasserstein gan objective for now
-	objective = objective_wgan
+	# objective = objective_wgan
+	objective = objective_gan
+
+	if opt.sampling_method == 'LH':
+		print array_list[:2]
+		samples = LHS(array_list[:nparam_dict[opt.sample_type]])
+	else:
+		samples = None
+
+	if opt.verbosity > 1:
+		print 'Samples:'
+		print samples
+
 
 	# ----------
 	#  Training
@@ -153,7 +187,7 @@ def main():
 		for j in xrange(opt.extraD+1):
 			
 			t0 = time.clock()
-			real, cond_params = draw_true_samples(opt.batch_size, samp_type=opt.sample_type)
+			real, cond_params = draw_true_samples(opt.batch_size, samp_type=opt.sample_type, LH=samples)
 			dt0 += time.clock()-t0
 
 			if opt.verbosity > 1:
@@ -174,22 +208,30 @@ def main():
 			if opt.verbosity > 1:
 				print 'fake has shape', fake.shape
 
-			fake = torch.cat((fake, cond_params), 1)
+			fake = torch.cat((fake, cond_params), 1).requires_grad_(True)
 
 			if j < opt.extraD:
 
 				t2 = time.clock()
 				optD.zero_grad()
-				lossD = objective(netD(real), netD(fake)) # calculate the loss function
+				d_real = netD(real)
+				d_fake = netD(fake)
+				lossD = objective(d_real, d_fake) # calculate the loss function
 				dt2 += time.clock()-t2
 
 				t3 = time.clock()
-				gradD = grad(lossD * opt.batch_size, fake, create_graph=True)[0] 
-				reguD = gradD.norm(2, 1).clamp(1).mean()
+				
+				#improved training of wasserstein gans
+				penalty = grad(d_real.sum(), real, create_graph=True)[0].view(-1,1).norm(2,1).pow(2).mean()
+
+				# gradD = grad(lossD * opt.batch_size, fake, create_graph=True)[0] 
+				# reguD = gradD.norm(2, 1).clamp(1).mean()
+				
 				dt3 += time.clock()-t3
 
 				t4 = time.clock()
-				(lossD + lamD * reguD).backward() # backward prop with some regularization
+				(lossD + (opt.gamma/2) * penalty).backward()
+				# (lossD + lamD * reguD).backward() # backward prop with some regularization
 				optD.step()
 				dt4 += time.clock()-t3
 			else:
@@ -202,14 +244,16 @@ def main():
 				(lossG).backward()
 				optG.step()
 				dt4 += time.clock() - t4
- 		
+		
+		# print lossG.item()
 
 		# save losses from the last iteration
 		lossD_vals.append(-1*lossD.item())
 		lossG_vals.append(lossG.item())
 
 		if (i % int(opt.n_iterations/10))==0:
-			print 'Iteration', i, 'lossD =', np.round(lossD.item(), 6), 'lossG =', np.round(lossG.item(), 6), 'reguD =', np.round(reguD.item(), 6)
+			# print 'Iteration', i, 'lossD =', np.round(lossD.item(), 6), 'lossG =', np.round(lossG.item(), 6), 'reguD =', np.round(reguD.item(), 6)
+			print 'Iteration', i, 'lossD =', np.round(lossD.item(), 6), 'lossG =', np.round(lossG.item(), 6)
 
 		if opt.verbosity > 1:
 			print 'lossD'
@@ -223,10 +267,12 @@ def main():
 		times[3, i] = dt3
 		times[4, i] = dt4
 
-    
+	
+	# print lossD_vals
+	# print lossG_vals
 	new_dir, frame_dir = create_directories(timestr)
 	
-	plot_loss_iterations(lossD_vals, lossG_vals, new_dir)
+	plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
 
 	plot_comp_resources(times, new_dir)	
 
