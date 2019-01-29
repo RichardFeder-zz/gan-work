@@ -32,17 +32,18 @@ parser.add_argument('--n_hidden', type=int, default=512)
 parser.add_argument('--n_layers', type=int, default=3)
 parser.add_argument('--extraD', type=int, default=10)
 parser.add_argument('--lr', type=float, default=0.0002, help='adam: learning rate')
-parser.add_argument('--b1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
+parser.add_argument('--b1', type=float, default=0.9, help='adam: decay of first order momentum of gradient')
 parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of first order momentum of gradient')
 parser.add_argument('--n_cpu', type=int, default=8, help='number of cpu threads to use during batch generation')
 parser.add_argument('--latent_dim', type=int, default=100, help='dimensionality of the latent space')
-parser.add_argument('--loss_func', type=str, default='MSE', help='type of loss function used during training')
+parser.add_argument('--loss_func', type=str, default='GAN', help='objective loss function used during training')
 parser.add_argument('--sample_type', type=str, default='1d_gaussian', help='type of distribution to learn')
 parser.add_argument('--verbosity', type=int, default=0, help='Verbosity level')
 parser.add_argument('--conditional_gan', type=int, default=1, help='1 to use conditional GAN, 0 otherwise')
 parser.add_argument('--gamma', type=float, default=1.0, help='Regularizing parameter for Roth GAN')
 parser.add_argument('--sampling_method', type=str, default='Unif', help='Uniform (Unif) sampling or Latin Hypercube (LH) sampling on params during training')
-parser.add_argument('--ngrid', type=int, default=10, help='number of partitions for each parameter when doing Latin Hypercube sampling')
+parser.add_argument('--ngrid', type=int, default=8, help='number of partitions for each parameter when doing Latin Hypercube sampling')
+parser.add_argument('--nmix', type=int, default=4, help='number of different param values to mix in a batch')
 
 
 opt = parser.parse_args()
@@ -63,49 +64,79 @@ if opt.verbosity > 0:
 	print 'Cuda: ', cuda
 
 
-mu_range = np.linspace(-1, 1, opt.ngrid)
-sig_range = np.linspace(0.1, 2, opt.ngrid)
+mu_range = np.linspace(-1.0, 1.0, opt.ngrid)
+sig_range = np.linspace(0.1, 2.0, opt.ngrid)
 array_list = [mu_range, sig_range, mu_range, sig_range, mu_range]
 
+new_dir, frame_dir = create_directories(timestr)
 
-def draw_true_samples(nsamp, samp_type='2d_gaussian', LH=None):
+
+def draw_true_samples(nsamp, samp_type='2d_gaussian', LH=None, ngrid=opt.ngrid):
 
 	'''For 2d_gaussian, *argv arguments are mu_0, mu_1, sig_1, sig_2, rho'''
 	if samp_type=='2d_gaussian':
-		if LH is not None:
-			samp = LH[np.random.randint(LH.shape[0])]
-			mus = np.array([samp[0], samp[2]])
-			sigs = np.array([samp[1], samp[3]])
-			rho = np.array([samp[4]])
-		else:
-			mus = np.random.choice(np.linspace(-1.0, 1.0, 10), size=2)
-			sigs = np.random.choice(np.linspace(0.01, 2, 10), size=2)
-			rho = np.random.choice(np.linspace(-1, 1, 10))
+
+		for i in xrange(opt.nmix):
+
+			if LH is not None:
+				samp = LH[np.random.randint(LH.shape[0])]
+				mus = np.array([samp[0], samp[2]])
+				sigs = np.array([samp[1], samp[3]])
+				rho = np.array([samp[4]])
+			else:
+				mus = np.random.choice(np.linspace(-1.0, 1.0, opt.ngrid), size=2)
+				sigs = np.random.choice(np.linspace(0.01, 2.0, opt.ngrid), size=2)
+				rho = np.random.choice(np.linspace(-1.0, 1.0, opt.ngrid))
+
+			cov = np.array([[sigs[0]**2, rho*sigs[0]*sigs[1]],[rho*sigs[0]*sigs[1], sigs[1]**2]])
+
+			if i > 0:
+				cond_temp = np.column_stack((np.full(nsamp/opt.nmix, mus[0]),  np.full(nsamp/opt.nmix, sigs[0]), np.full(nsamp/opt.nmix, mus[1]), np.full(nsamp/opt.nmix, sigs[1]), np.full(nsamp/opt.nmix, rho)))
+				conditional_params = np.vstack((conditional_params, cond_temp))
+
+				temp = np.column_stack((np.random.multivariate_normal(mus, cov, nsamp/opt.nmix), cond_temp))
+				s = np.vstack((s, temp))
+			else:
+
+				conditional_params = np.column_stack((np.full(nsamp/opt.nmix, mus[0]),  np.full(nsamp/opt.nmix, sigs[0]), np.full(nsamp/opt.nmix, mus[1]), np.full(nsamp/opt.nmix, sigs[1]), np.full(nsamp/opt.nmix, rho)))
+				s = np.column_stack((np.random.multivariate_normal(mus, cov, nsamp/opt.nmix), conditional_params))
 		
-		cov = np.array([[sigs[0]**2, rho*sigs[0]*sigs[1]],[rho*sigs[0]*sigs[1], sigs[1]**2]])
-		
-		conditional_params = np.column_stack((np.full(nsamp, mus[0]),  np.full(nsamp, sigs[0]), np.full(nsamp, mus[1]), np.full(nsamp, sigs[1]), np.full(nsamp, rho)))
-		
-		s = torch.from_numpy(np.column_stack((np.random.multivariate_normal(mus, cov, nsamp), conditional_params)))
 		conditional_params = torch.from_numpy(conditional_params)
+		s = torch.from_numpy(s)
+
+		if opt.verbosity > 1:
+			print conditional_params.shape
+			print conditional_params
+			print s.shape
+			print s
 
 	elif samp_type=='1d_gaussian':
-		if LH is not None:
-			samp = LH[np.random.randint(LH.shape[0])]
-			# print 'sample:', samp
-			# samp = np.random.choice(LH)
-			mu = samp[0]
-			sig = samp[1]
-		else:
-			mu = np.random.choice(np.linspace(-1.0, 1.0, 8))
-			sig = np.random.choice(np.linspace(0.1, 2, 8))
-			# log spaced bins
-			# sig = np.random.choice(np.exp(np.linspace(-3, np.log(3), 20)))
 
-		s = np.column_stack((np.random.normal(mu, sig, nsamp), np.full(nsamp, mu), np.full(nsamp, sig)))
-		conditional_params = np.column_stack((np.full(nsamp, mu), np.full(nsamp, sig)))
+		for i in xrange(opt.nmix):
+			if LH is not None:
+				samp = LH[np.random.randint(LH.shape[0])]
+				mu = samp[0]
+				sig = samp[1]
+			else:
+				mu = np.random.choice(np.linspace(-1.0, 1.0, 8))
+				sig = np.random.choice(np.linspace(0.01, 2, 8))
+
+			if i > 0:
+				temp = np.column_stack((np.random.normal(mu, sig, nsamp/opt.nmix), np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
+				s = np.vstack((s, temp))
+				cond_temp = np.column_stack((np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
+				conditional_params = np.vstack((conditional_params, cond_temp))
+			else:
+				s = np.column_stack((np.random.normal(mu, sig, nsamp/opt.nmix), np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
+				conditional_params = np.column_stack((np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
+
+		if opt.verbosity > 1:
+			print conditional_params.shape
+			print s.shape
+			print conditional_params
+			print s
+
 		conditional_params = torch.from_numpy(conditional_params)
-
 
 		s = torch.from_numpy(s)
 	
@@ -158,10 +189,11 @@ def main():
 
 	times = np.zeros((5, opt.n_iterations))
 
-
-	# wasserstein gan objective for now
-	# objective = objective_wgan
-	objective = objective_gan
+	if opt.loss_func=='WGAN':
+		# wasserstein gan objective for now
+		objective = objective_wgan
+	else:
+		objective = objective_gan
 
 	if opt.sampling_method == 'LH':
 		print array_list[:2]
@@ -245,7 +277,6 @@ def main():
 				optG.step()
 				dt4 += time.clock() - t4
 		
-		# print lossG.item()
 
 		# save losses from the last iteration
 		lossD_vals.append(-1*lossD.item())
@@ -254,6 +285,23 @@ def main():
 		if (i % int(opt.n_iterations/10))==0:
 			# print 'Iteration', i, 'lossD =', np.round(lossD.item(), 6), 'lossG =', np.round(lossG.item(), 6), 'reguD =', np.round(reguD.item(), 6)
 			print 'Iteration', i, 'lossD =', np.round(lossD.item(), 6), 'lossG =', np.round(lossG.item(), 6)
+			if opt.sample_type=='2d_gaussian':
+				mus = [0.0, 0.0]
+				sigs = [1.0, 1.0]
+				rhos = [-0.8, 0.0, 0.8]
+				g_samples = []
+				true_samples = []
+				for rh in rhos:
+					cov = np.array([[sigs[0]**2, rh*sigs[0]*sigs[1]],[rh*sigs[0]*sigs[1], sigs[1]**2]])
+					true_samp = np.random.multivariate_normal(mus, cov, 1000)
+					gen_input = sample_noise(1000, opt.latent_dim)
+					cond_params = torch.from_numpy(np.column_stack((np.full(1000, mus[0]), np.full(1000, sigs[0]), np.full(1000, mus[1]), np.full(1000, sigs[1]), np.full(1000, rh)))).float()
+					gen_sample = netG(torch.cat((gen_input, cond_params), 1))
+
+					g_samples.append(gen_sample.detach().numpy())
+					true_samples.append(true_samp)
+			save_frames(g_samples, true_samples, rhos, frame_dir, i)
+
 
 		if opt.verbosity > 1:
 			print 'lossD'
@@ -267,10 +315,6 @@ def main():
 		times[3, i] = dt3
 		times[4, i] = dt4
 
-	
-	# print lossD_vals
-	# print lossG_vals
-	new_dir, frame_dir = create_directories(timestr)
 	
 	plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
 

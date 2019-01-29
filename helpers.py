@@ -75,6 +75,21 @@ def plot_comp_resources(timearray, directory):
     plt.savefig(directory+'/comp_resources.png', bbox_inches='tight')
     plt.close()
 
+
+def save_frames(fakes, reals, rhos, dir, iter):
+    plt.figure(figsize=(9, 3))
+    for i, rho in enumerate(rhos):
+        plt.subplot(1, len(rhos), i+1)
+        plt.title('Rho = '+str(rho))
+        plt.scatter(fakes[i][:,0], fakes[i][:,1], label='Generator', color='b', alpha=0.5, s=1)
+        plt.scatter(reals[i][:,0], reals[i][:,1], label='Truth', color='r', alpha=0.5, s=1)
+        plt.legend()
+    plt.savefig(dir+'/iteration_'+str(iter)+'.pdf', bbox_inches='tight')
+    plt.close()
+
+
+
+
 def plot_loss_iterations(lossD_vals, lossG_vals, directory):
     n = len(lossD_vals)
 
