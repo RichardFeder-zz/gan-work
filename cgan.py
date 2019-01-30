@@ -17,6 +17,9 @@ from helpers import *
 
 Device = 'cpu'
 
+# random seed for initialization
+np.random.seed(20190129)
+
 nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':2, 'grid':2})
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
 lamD = 10.
@@ -44,6 +47,7 @@ parser.add_argument('--gamma', type=float, default=1.0, help='Regularizing param
 parser.add_argument('--sampling_method', type=str, default='Unif', help='Uniform (Unif) sampling or Latin Hypercube (LH) sampling on params during training')
 parser.add_argument('--ngrid', type=int, default=8, help='number of partitions for each parameter when doing Latin Hypercube sampling')
 parser.add_argument('--nmix', type=int, default=4, help='number of different param values to mix in a batch')
+parser.add_argument('--activation', type=str, default='ReLU', help='type of activation function to use')
 
 
 opt = parser.parse_args()
@@ -177,9 +181,9 @@ def main():
 	'''Initialize the discriminator and generator from the Perceptron class, use Adam optimizer'''
 
 	# take in (x,y) position along with conditional params, return softmax output
-	netD = Perceptron([outparam_dict[opt.sample_type]+n_cond_params] + [opt.n_hidden] * opt.n_layers + [1]) 
+	netD = Perceptron([outparam_dict[opt.sample_type]+n_cond_params] + [opt.n_hidden] * opt.n_layers + [1], opt.activation) 
 	# take in latent vector and generate (x,y) position
-	netG = Perceptron([opt.latent_dim+n_cond_params] + [opt.n_hidden] * opt.n_layers + [outparam_dict[opt.sample_type]])
+	netG = Perceptron([opt.latent_dim+n_cond_params] + [opt.n_hidden] * opt.n_layers + [outparam_dict[opt.sample_type]], opt.activation)
 	
 	netD.to(Device)
 	netG.to(Device)

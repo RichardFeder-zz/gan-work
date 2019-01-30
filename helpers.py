@@ -20,6 +20,7 @@ outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2,
 
 base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
 
+
 def create_directories(time_string):
     new_dir = base_dir+time_string
     if not os.path.isdir(new_dir):
@@ -84,7 +85,7 @@ def save_frames(fakes, reals, rhos, dir, iter):
         plt.scatter(fakes[i][:,0], fakes[i][:,1], label='Generator', color='b', alpha=0.5, s=1)
         plt.scatter(reals[i][:,0], reals[i][:,1], label='Truth', color='r', alpha=0.5, s=1)
         plt.legend()
-    plt.savefig(dir+'/iteration_'+str(iter)+'.pdf', bbox_inches='tight')
+    plt.savefig(dir+'/iteration_'+str(iter)+'.png', bbox_inches='tight')
     plt.close()
 
 
@@ -127,15 +128,24 @@ def LHS(array_list):
     return LH_samples
 
 class Perceptron(torch.nn.Module):
-    def __init__(self, sizes, final=None):
+    def __init__(self, sizes, activation, final=None):
         super(Perceptron, self).__init__() # what does this line do?
         layers = []
         print 'Initializing Neural Net'
+        print 'Activation: '+activation
         for i in xrange(len(sizes) - 1):
             print 'Layer', i, ':', sizes[i], sizes[i+1]
             layers.append(torch.nn.Linear(sizes[i], sizes[i + 1]))
             if i != (len(sizes) - 2):
-                layers.append(torch.nn.ReLU())
+                if activation=='ReLU':
+                    layers.append(torch.nn.ReLU())
+                elif activation=='LeakyReLU':
+                    layers.append(torch.nn.LeakyReLU()) # leaky relu, alpha=0.01
+                elif activation=='ELU':
+                    layers.append(torch.nn.ELU())
+                elif activation=='PReLU':
+                    layers.append(torch.nn.PReLU())
+
         if final is not None:
             layers.append(final())
         self.net = torch.nn.Sequential(*layers)
