@@ -1,20 +1,14 @@
 import argparse
 import os
-import sys
 import numpy as np
-import math
 import time
-import cPickle as pickle
 
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
-import imageio
 
-import matplotlib
-matplotlib.use('tkAgg') 
-import matplotlib.pyplot as plt
 from helpers import *
+from models import *
 
 Device = 'cpu'
 
@@ -41,6 +35,7 @@ parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of firs
 parser.add_argument('--n_cpu', type=int, default=8, help='number of cpu threads to use during batch generation')
 parser.add_argument('--latent_dim', type=int, default=100, help='dimensionality of the latent space')
 parser.add_argument('--loss_func', type=str, default='GAN', help='objective loss function used during training')
+parser.add_argument('--architecture', type=str, default='GAN', help='GAN or ALI, more functionality here soon')
 parser.add_argument('--sample_type', type=str, default='1d_gaussian', help='type of distribution to learn')
 parser.add_argument('--verbosity', type=int, default=0, help='Verbosity level')
 parser.add_argument('--conditional_gan', type=int, default=1, help='1 to use conditional GAN, 0 otherwise')
@@ -73,34 +68,6 @@ sig_range = np.linspace(0.1, 2.0, opt.ngrid)
 array_list = [mu_range, sig_range, mu_range, sig_range, mu_range]
 
 new_dir, frame_dir = create_directories(timestr)
-
-
-class Perceptron(torch.nn.Module):
-    def __init__(self, sizes, activation, final=None):
-        super(Perceptron, self).__init__() # what does this line do?
-        layers = []
-        print 
-        print 'Initializing Neural Net'
-        print 'Activation: '+activation
-        for i in xrange(len(sizes) - 1):
-            print 'Layer', i, ':', sizes[i], sizes[i+1]
-            layers.append(torch.nn.Linear(sizes[i], sizes[i + 1]))
-            if i != (len(sizes) - 2):
-                if activation=='ReLU':
-                    layers.append(torch.nn.ReLU())
-                elif activation=='LeakyReLU':
-                    layers.append(torch.nn.LeakyReLU()) # leaky relu, alpha=0.01
-                elif activation=='ELU':
-                    layers.append(torch.nn.ELU())
-                elif activation=='PReLU':
-                    layers.append(torch.nn.PReLU())
-
-        if final is not None:
-            layers.append(final())
-        self.net = torch.nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.net(x)
 
 
 def main():

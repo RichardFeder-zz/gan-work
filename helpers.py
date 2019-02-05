@@ -1,9 +1,5 @@
-import argparse
 import os
-import sys
 import numpy as np
-import math
-import time
 import cPickle as pickle
 from torch.nn.functional import binary_cross_entropy_with_logits as bce
 import imageio
@@ -23,7 +19,6 @@ outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2,
 base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
 
 Device = 'cpu'
-
 
 
 def create_directories(time_string):
