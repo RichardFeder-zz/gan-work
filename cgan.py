@@ -9,6 +9,7 @@ import cPickle as pickle
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
+import imageio
 
 import matplotlib
 matplotlib.use('tkAgg') 
@@ -20,7 +21,7 @@ Device = 'cpu'
 # random seed for initialization
 np.random.seed(20190129)
 
-nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':2, 'grid':2})
+nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':0, 'grid':0})
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
 lamD = 10.
 
@@ -49,141 +50,66 @@ parser.add_argument('--ngrid', type=int, default=8, help='number of partitions f
 parser.add_argument('--nmix', type=int, default=4, help='number of different param values to mix in a batch')
 parser.add_argument('--activation', type=str, default='ReLU', help='type of activation function to use')
 
-
 opt = parser.parse_args()
-print(opt)
-
 
 comments = str(raw_input("Any comments? "))
 
+opt.n_cond_params = nparam_dict[opt.sample_type]
+print(opt)
 
-n_cond_params = nparam_dict[opt.sample_type] if opt.conditional_gan else 0
 
 cuda = True if torch.cuda.is_available() else False
 
 
 if opt.verbosity > 0:
 	print 'Number of conditional parameters:'
-	print n_cond_params
+	print opt.n_cond_params
 	print 'Cuda: ', cuda
-
 
 mu_range = np.linspace(-1.0, 1.0, opt.ngrid)
 sig_range = np.linspace(0.1, 2.0, opt.ngrid)
+# sig_range = np.linspace(0.01, 0.02, opt.ngrid)
+
 array_list = [mu_range, sig_range, mu_range, sig_range, mu_range]
 
 new_dir, frame_dir = create_directories(timestr)
 
 
-def draw_true_samples(nsamp, samp_type='2d_gaussian', LH=None, ngrid=opt.ngrid):
+class Perceptron(torch.nn.Module):
+    def __init__(self, sizes, activation, final=None):
+        super(Perceptron, self).__init__() # what does this line do?
+        layers = []
+        print 
+        print 'Initializing Neural Net'
+        print 'Activation: '+activation
+        for i in xrange(len(sizes) - 1):
+            print 'Layer', i, ':', sizes[i], sizes[i+1]
+            layers.append(torch.nn.Linear(sizes[i], sizes[i + 1]))
+            if i != (len(sizes) - 2):
+                if activation=='ReLU':
+                    layers.append(torch.nn.ReLU())
+                elif activation=='LeakyReLU':
+                    layers.append(torch.nn.LeakyReLU()) # leaky relu, alpha=0.01
+                elif activation=='ELU':
+                    layers.append(torch.nn.ELU())
+                elif activation=='PReLU':
+                    layers.append(torch.nn.PReLU())
 
-	'''For 2d_gaussian, *argv arguments are mu_0, mu_1, sig_1, sig_2, rho'''
-	if samp_type=='2d_gaussian':
+        if final is not None:
+            layers.append(final())
+        self.net = torch.nn.Sequential(*layers)
 
-		for i in xrange(opt.nmix):
-
-			if LH is not None:
-				samp = LH[np.random.randint(LH.shape[0])]
-				mus = np.array([samp[0], samp[2]])
-				sigs = np.array([samp[1], samp[3]])
-				rho = np.array([samp[4]])
-			else:
-				mus = np.random.choice(np.linspace(-1.0, 1.0, opt.ngrid), size=2)
-				sigs = np.random.choice(np.linspace(0.01, 2.0, opt.ngrid), size=2)
-				rho = np.random.choice(np.linspace(-1.0, 1.0, opt.ngrid))
-
-			cov = np.array([[sigs[0]**2, rho*sigs[0]*sigs[1]],[rho*sigs[0]*sigs[1], sigs[1]**2]])
-
-			if i > 0:
-				cond_temp = np.column_stack((np.full(nsamp/opt.nmix, mus[0]),  np.full(nsamp/opt.nmix, sigs[0]), np.full(nsamp/opt.nmix, mus[1]), np.full(nsamp/opt.nmix, sigs[1]), np.full(nsamp/opt.nmix, rho)))
-				conditional_params = np.vstack((conditional_params, cond_temp))
-
-				temp = np.column_stack((np.random.multivariate_normal(mus, cov, nsamp/opt.nmix), cond_temp))
-				s = np.vstack((s, temp))
-			else:
-
-				conditional_params = np.column_stack((np.full(nsamp/opt.nmix, mus[0]),  np.full(nsamp/opt.nmix, sigs[0]), np.full(nsamp/opt.nmix, mus[1]), np.full(nsamp/opt.nmix, sigs[1]), np.full(nsamp/opt.nmix, rho)))
-				s = np.column_stack((np.random.multivariate_normal(mus, cov, nsamp/opt.nmix), conditional_params))
-		
-		conditional_params = torch.from_numpy(conditional_params)
-		s = torch.from_numpy(s)
-
-		if opt.verbosity > 1:
-			print conditional_params.shape
-			print conditional_params
-			print s.shape
-			print s
-
-	elif samp_type=='1d_gaussian':
-
-		for i in xrange(opt.nmix):
-			if LH is not None:
-				samp = LH[np.random.randint(LH.shape[0])]
-				mu = samp[0]
-				sig = samp[1]
-			else:
-				mu = np.random.choice(np.linspace(-1.0, 1.0, 8))
-				sig = np.random.choice(np.linspace(0.01, 2, 8))
-
-			if i > 0:
-				temp = np.column_stack((np.random.normal(mu, sig, nsamp/opt.nmix), np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
-				s = np.vstack((s, temp))
-				cond_temp = np.column_stack((np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
-				conditional_params = np.vstack((conditional_params, cond_temp))
-			else:
-				s = np.column_stack((np.random.normal(mu, sig, nsamp/opt.nmix), np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
-				conditional_params = np.column_stack((np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
-
-		if opt.verbosity > 1:
-			print conditional_params.shape
-			print s.shape
-			print conditional_params
-			print s
-
-		conditional_params = torch.from_numpy(conditional_params)
-
-		s = torch.from_numpy(s)
-	
-	elif samp_type=='bernoulli':
-		n = argv[0]
-		p = argv[1]
-
-		conditional_params = torch.cat((n,p), 0)
-		s = torch.from_numpy(np.random.binomial(n, p, nsamp))
-
-	elif samp_type == 'ring':
-		k = argv[0]
-		std = argv[1]
-		m = means_circle(k)
-		i = torch.zeros(nsamp).random_(m.size(0)).long()
-
-		conditional_params = torch.cat((k, std), 0)
-		s = torch.randn(nsamp, 2) * std + m[i]
-	
-	elif samp_type == 'grid':
-		k = argv[0]
-		std = argv[1]
-		m = means_grid(k)
-		i = torch.zeros(nsamp).random_(m.size(0)).long()
-		conditional_params = torch.cat((k,std), 0)
-		s = torch.randn(nsamp, 2) * std + m[i]
-
-	return s.float().requires_grad_(True), conditional_params.float()
-
-
-
-def sample_noise(bs, d):
-	z = torch.randn(bs, d).float()
-	return Variable(z.to(Device), requires_grad=True)
+    def forward(self, x):
+        return self.net(x)
 
 
 def main():
 	'''Initialize the discriminator and generator from the Perceptron class, use Adam optimizer'''
 
 	# take in (x,y) position along with conditional params, return softmax output
-	netD = Perceptron([outparam_dict[opt.sample_type]+n_cond_params] + [opt.n_hidden] * opt.n_layers + [1], opt.activation) 
+	netD = Perceptron([outparam_dict[opt.sample_type]+opt.n_cond_params] + [opt.n_hidden] * opt.n_layers + [1], opt.activation) 
 	# take in latent vector and generate (x,y) position
-	netG = Perceptron([opt.latent_dim+n_cond_params] + [opt.n_hidden] * opt.n_layers + [outparam_dict[opt.sample_type]], opt.activation)
+	netG = Perceptron([opt.latent_dim+opt.n_cond_params] + [opt.n_hidden] * opt.n_layers + [outparam_dict[opt.sample_type]], opt.activation)
 	
 	netD.to(Device)
 	netG.to(Device)
@@ -223,7 +149,10 @@ def main():
 		for j in xrange(opt.extraD+1):
 			
 			t0 = time.clock()
-			real, cond_params = draw_true_samples(opt.batch_size, samp_type=opt.sample_type, LH=samples)
+			if opt.n_cond_params > 0:
+				real, cond_params = draw_true_samples(opt.batch_size, opt, samp_type=opt.sample_type, LH=samples)
+			else:
+				real = draw_true_samples(opt.batch_size, opt, samp_type=opt.sample_type)
 			dt0 += time.clock()-t0
 
 			if opt.verbosity > 1:
@@ -231,8 +160,7 @@ def main():
 
 			gen_input = sample_noise(opt.batch_size, opt.latent_dim)
 			
-			if cond_params is not None:
-
+			if opt.n_cond_params > 0:
 				gen_input = torch.cat((gen_input, cond_params), 1)
 				if opt.verbosity > 1:
 					print 'gen_input has shape', gen_input.shape
@@ -244,7 +172,8 @@ def main():
 			if opt.verbosity > 1:
 				print 'fake has shape', fake.shape
 
-			fake = torch.cat((fake, cond_params), 1).requires_grad_(True)
+			if opt.n_cond_params > 0:
+				fake = torch.cat((fake, cond_params), 1).requires_grad_(True)
 
 			if j < opt.extraD:
 
@@ -304,7 +233,13 @@ def main():
 
 					g_samples.append(gen_sample.detach().numpy())
 					true_samples.append(true_samp)
-			save_frames(g_samples, true_samples, rhos, frame_dir, i)
+				save_frames(g_samples, true_samples, rhos, frame_dir, i)
+
+			elif opt.sample_type=='ring' or opt.sample_type=='grid':
+				real = draw_true_samples(2000, opt, samp_type=opt.sample_type)
+				gen_input = sample_noise(2000, opt.latent_dim)
+				fake = netG(gen_input)
+				plot(real, fake, frame_dir, i)
 
 
 		if opt.verbosity > 1:
@@ -322,6 +257,9 @@ def main():
 	
 	plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
 
+	print 'frame_dir:', frame_dir
+	make_gif(frame_dir)
+
 	plot_comp_resources(times, new_dir)	
 
 	save_nn(netG, new_dir+'/netG')
@@ -330,9 +268,10 @@ def main():
 
 	save_params(new_dir, opt)
 
-	with open(new_dir+'/comments.txt', 'w') as p:
-		p.write(comments)
-		p.close()
+	if len(comments)>0:
+		with open(new_dir+'/comments.txt', 'w') as p:
+			p.write(comments)
+			p.close()
 
 
 ##### Execute program ########    
