@@ -20,6 +20,9 @@ base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
 
 Device = 'cpu'
 
+mu_range = np.linspace(-1.0, 1.0, 8)
+sig_range = np.linspace(0.1, 2.0, 8)
+
 
 def create_directories(time_string):
     new_dir = base_dir+time_string
@@ -61,6 +64,8 @@ def save_params(dir, opt):
         for key in param_dict:
             file2.write(key+': '+str(param_dict[key])+'\n')
     file2.close()
+
+
 
 
 def init_loss(loss_func):
