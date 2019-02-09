@@ -1,6 +1,9 @@
 from helpers import *
 
-basedir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+if sys.platform=='darwin':
+    basedir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+elif sys.platform=='linux2':
+    basedir = '/home1/06224/rfederst/gan-work/results/'
 
 def garb_coll():
     n=0

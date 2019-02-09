@@ -3,23 +3,29 @@ import numpy as np
 import cPickle as pickle
 from torch.nn.functional import binary_cross_entropy_with_logits as bce
 import imageio
-
+import sys
 
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
 
 import matplotlib
-matplotlib.use('tkAgg') 
+if sys.platform=='darwin':
+    base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+    matplotlib.use('tkAgg')
+elif sys.platform=='linux2':
+    base_dir = '/home1/06224/rfederst/gan-work/results/'
+    matplotlib.use('Agg')
+#matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 
 nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':2, 'grid':2})
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
 
-if sys.platform=='darwin':
-    base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
-elif sys.platform=='linux2':
-    base_dir = '/home1/06224/rfederst/gan-work/results/'
+#if sys.platform=='darwin':
+#    base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+#elif sys.platform=='linux2':
+#    base_dir = '/home1/06224/rfederst/gan-work/results/'
 
 Device = 'cpu'
 
