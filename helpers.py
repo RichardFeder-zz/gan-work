@@ -16,7 +16,10 @@ import matplotlib.pyplot as plt
 nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':2, 'grid':2})
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
 
-base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+if sys.platform=='darwin':
+    base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+elif sys.platform=='linux2':
+    base_dir = '/home1/06224/rfederst/gan-work/results/'
 
 Device = 'cpu'
 
@@ -98,7 +101,7 @@ def save_frames(fakes, reals, rhos, dir, iter):
         plt.title('Rho = '+str(rho))
         plt.scatter(fakes[i][:,0], fakes[i][:,1], label='Generator', color='b', alpha=0.5, s=1)
         plt.scatter(reals[i][:,0], reals[i][:,1], label='Truth', color='r', alpha=0.5, s=1)
-        plt.legend()
+        plt.legend(loc=1)
     plt.savefig(dir+'/iteration_'+str(iter)+'.png', bbox_inches='tight')
     plt.close()
 
@@ -189,7 +192,7 @@ def means_grid(k=25):
 
 def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
 
-    '''For 2d_gaussian, *argv arguments are mu_0, mu_1, sig_1, sig_2, rho'''
+    '''For 2d_gaussian, conditional arguments are mu_0, sig_1, mu_2, sig_2, rho in that order'''
     if samp_type=='2d_gaussian':
 
         for i in xrange(opt.nmix):
@@ -209,25 +212,14 @@ def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
             if i > 0:
                 cond_temp = np.column_stack((np.full(nsamp/opt.nmix, mus[0]),  np.full(nsamp/opt.nmix, sigs[0]), np.full(nsamp/opt.nmix, mus[1]), np.full(nsamp/opt.nmix, sigs[1]), np.full(nsamp/opt.nmix, rho)))
                 conditional_params = np.vstack((conditional_params, cond_temp))
-
-                temp = np.column_stack((np.random.multivariate_normal(mus, cov, nsamp/opt.nmix), cond_temp))
+                temp = np.random.multivariate_normal(mus, cov, nsamp/opt.nmix)
                 s = np.vstack((s, temp))
             else:
-
                 conditional_params = np.column_stack((np.full(nsamp/opt.nmix, mus[0]),  np.full(nsamp/opt.nmix, sigs[0]), np.full(nsamp/opt.nmix, mus[1]), np.full(nsamp/opt.nmix, sigs[1]), np.full(nsamp/opt.nmix, rho)))
-                s = np.column_stack((np.random.multivariate_normal(mus, cov, nsamp/opt.nmix), conditional_params))
+                s = np.random.multivariate_normal(mus, cov, nsamp/opt.nmix)
         
-        conditional_params = torch.from_numpy(conditional_params)
-        s = torch.from_numpy(s)
-
-        if opt.verbosity > 1:
-            print conditional_params.shape
-            print conditional_params
-            print s.shape
-            print s
-
+    # Conditional arguments are mu and sigma in that order '''
     elif samp_type=='1d_gaussian':
-
         for i in xrange(opt.nmix):
             if LH is not None:
                 samp = LH[np.random.randint(LH.shape[0])]
@@ -238,12 +230,15 @@ def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
                 sig = np.random.choice(sig_range)
 
             if i > 0:
-                temp = np.column_stack((np.random.normal(mu, sig, nsamp/opt.nmix), np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
-                s = np.vstack((s, temp))
+                temp = np.random.normal(mu, sig, nsamp/opt.nmix)
+                print 'temp:', temp.shape
+                s = np.append(s, temp)
+                print s.shape
                 cond_temp = np.column_stack((np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
                 conditional_params = np.vstack((conditional_params, cond_temp))
             else:
-                s = np.column_stack((np.random.normal(mu, sig, nsamp/opt.nmix), np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
+                s = np.random.normal(mu, sig, nsamp/opt.nmix)
+                print s.shape
                 conditional_params = np.column_stack((np.full(nsamp/opt.nmix, mu), np.full(nsamp/opt.nmix, sig)))
 
         if opt.verbosity > 1:
@@ -252,9 +247,6 @@ def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
             print conditional_params
             print s
 
-        conditional_params = torch.from_numpy(conditional_params)
-
-        s = torch.from_numpy(s)
     
     elif samp_type=='bernoulli':
         n = argv[0]
@@ -276,6 +268,9 @@ def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
         s = torch.randn(nsamp, 2) * 0.02 + m[i]
 
     if opt.n_cond_params==0:
-        return s.float().requires_grad_(True)
+        return s
     else:
-        return s.float().requires_grad_(True), conditional_params.float()
+        return s, conditional_params
+
+
+

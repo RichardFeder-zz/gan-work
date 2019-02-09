@@ -35,7 +35,7 @@ parser.add_argument('--n_cpu', type=int, default=8, help='number of cpu threads 
 parser.add_argument('--latent_dim', type=int, default=100, help='dimensionality of the latent space')
 parser.add_argument('--loss_func', type=str, default='GAN', help='objective loss function used during training')
 parser.add_argument('--architecture', type=str, default='GAN', help='GAN or ALI, more functionality here soon')
-parser.add_argument('--sample_type', type=str, default='1d_gaussian', help='type of distribution to learn')
+parser.add_argument('--sample_type', type=str, default='2d_gaussian', help='type of distribution to learn')
 parser.add_argument('--verbosity', type=int, default=0, help='Verbosity level')
 parser.add_argument('--conditional_gan', type=int, default=1, help='1 to use conditional GAN, 0 otherwise')
 parser.add_argument('--gamma', type=float, default=1.0, help='Regularizing parameter for Roth GAN')
@@ -43,6 +43,10 @@ parser.add_argument('--sampling_method', type=str, default='Unif', help='Uniform
 parser.add_argument('--ngrid', type=int, default=8, help='number of partitions for each parameter when doing Latin Hypercube sampling')
 parser.add_argument('--nmix', type=int, default=4, help='number of different param values to mix in a batch')
 parser.add_argument('--activation', type=str, default='ReLU', help='type of activation function to use')
+parser.add_argument('--weight_decay', type=float, default=2e-5, help='exponential decay factor of weights over run')
+parser.add_argument('--lr_decay', type=float, default=0.99, help='exponential decay factor of weights over run')
+parser.add_argument('--n_lr_decays', type=int, default=40, help='number of times to apply exponential decay to learning rate')
+
 
 opt = parser.parse_args()
 
@@ -86,11 +90,11 @@ def main():
 	netD.to(Device)
 	netG.to(Device)
 	netE.to(Device)
-	optD = torch.optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=2.5e-5)
-	optG = torch.optim.Adam([{'params' : netE.parameters()},{'params': netG.parameters()}], lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=2.5e-5)
+	optD = torch.optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
+	optG = torch.optim.Adam([{'params' : netE.parameters()},{'params': netG.parameters()}], lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
 
-	schedulerG = torch.optim.lr_scheduler.StepLR(optG, step_size=int(opt.n_iterations/40), gamma=0.95)
-	schedulerD = torch.optim.lr_scheduler.StepLR(optD, step_size=int(opt.n_iterations/40), gamma=0.95)
+	schedulerG = torch.optim.lr_scheduler.StepLR(optG, step_size=int(opt.n_iterations/opt.n_lr_decays), gamma=opt.lr_decay)
+	schedulerD = torch.optim.lr_scheduler.StepLR(optD, step_size=int(opt.n_iterations/opt.n_lr_decays), gamma=opt.lr_decay)
 
 
 	if opt.sampling_method == 'LH':
@@ -116,21 +120,21 @@ def main():
 		else:
 			real = draw_true_samples(opt.batch_size, opt, samp_type=opt.sample_type)
 		
-		z_encoded = netE(real[:,:outparam_dict[opt.sample_type]])
+
+		real = torch.from_numpy(real).float().requires_grad_(True)
+		z_encoded = netE(real)
 
 		gen_input = sample_noise(opt.batch_size, opt.latent_dim)
 
 		if opt.n_cond_params > 0:
-			gen_input = torch.cat((cond_params, gen_input), 1)
+			gen_input = torch.cat((torch.from_numpy(cond_params).float(), gen_input), 1)
 
 		fake = netG(gen_input)
-		if opt.n_cond_params > 0:
-			fake = torch.cat((fake, cond_params), 1).requires_grad_(True)
 
 		# real, fake has sample values, then conditional parameters, then latent z
-		real = torch.cat((real[:,:outparam_dict[opt.sample_type]], z_encoded), 1)
-		fake = torch.cat((fake[:,:outparam_dict[opt.sample_type]], gen_input), 1).requires_grad_(True)
-		
+
+		real = torch.cat((real, z_encoded), 1)
+		fake = torch.cat((fake, gen_input), 1).requires_grad_(True)
 
 		output_real = netD(real)
 		output_fake = netD(fake)

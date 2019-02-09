@@ -2,6 +2,7 @@ import argparse
 import os
 import numpy as np
 import time
+import sys
 
 from torch.autograd import Variable, grad
 import torch.nn as nn
@@ -19,7 +20,11 @@ nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':0, '
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
 lamD = 10.
 
-base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+if sys.platform=='darwin':
+    base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+elif sys.platform=='linux2':
+    base_dir = '/home1/06224/rfederst/gan-work/results/'
+
 timestr = time.strftime("%Y%m%d-%H%M%S")
 # parse initial parameters, set to default if parameters left unspecified
 
@@ -44,17 +49,13 @@ parser.add_argument('--sampling_method', type=str, default='Unif', help='Uniform
 parser.add_argument('--ngrid', type=int, default=8, help='number of partitions for each parameter when doing Latin Hypercube sampling')
 parser.add_argument('--nmix', type=int, default=4, help='number of different param values to mix in a batch')
 parser.add_argument('--activation', type=str, default='ReLU', help='type of activation function to use')
-
 opt = parser.parse_args()
-
 comments = str(raw_input("Any comments? "))
-
 opt.n_cond_params = nparam_dict[opt.sample_type]
 print(opt)
 
 
 cuda = True if torch.cuda.is_available() else False
-
 
 if opt.verbosity > 0:
 	print 'Number of conditional parameters:'
@@ -68,6 +69,9 @@ sig_range = np.linspace(0.1, 2.0, opt.ngrid)
 array_list = [mu_range, sig_range, mu_range, sig_range, mu_range]
 
 new_dir, frame_dir = create_directories(timestr)
+
+
+
 
 
 def main():
@@ -122,25 +126,21 @@ def main():
 				real = draw_true_samples(opt.batch_size, opt, samp_type=opt.sample_type)
 			dt0 += time.clock()-t0
 
-			if opt.verbosity > 1:
-				print 'conditional parameters:', real[0, 1:]
 
 			gen_input = sample_noise(opt.batch_size, opt.latent_dim)
 			
 			if opt.n_cond_params > 0:
-				gen_input = torch.cat((gen_input, cond_params), 1)
-				if opt.verbosity > 1:
-					print 'gen_input has shape', gen_input.shape
+				gen_input = torch.cat((gen_input, torch.from_numpy(cond_params).float()), 1)
+
 			
 			t1 = time.clock()
 			fake = netG(gen_input)
 			dt1 += time.clock()-t1
 
-			if opt.verbosity > 1:
-				print 'fake has shape', fake.shape
-
 			if opt.n_cond_params > 0:
-				fake = torch.cat((fake, cond_params), 1).requires_grad_(True)
+				fake = torch.cat((fake, torch.from_numpy(cond_params).float()), 1).requires_grad_(True)
+			
+			real= torch.from_numpy(np.column_stack((real, cond_params))).float().requires_grad_(True)
 
 			if j < opt.extraD:
 
@@ -149,32 +149,31 @@ def main():
 				d_real = netD(real)
 				d_fake = netD(fake)
 				lossD = objective(d_real, d_fake) # calculate the loss function
+				
 				dt2 += time.clock()-t2
-
 				t3 = time.clock()
 				
 				#improved training of wasserstein gans
 				penalty = grad(d_real.sum(), real, create_graph=True)[0].view(-1,1).norm(2,1).pow(2).mean()
 
-				# gradD = grad(lossD * opt.batch_size, fake, create_graph=True)[0] 
-				# reguD = gradD.norm(2, 1).clamp(1).mean()
-				
 				dt3 += time.clock()-t3
-
 				t4 = time.clock()
+				
 				(lossD + (opt.gamma/2) * penalty).backward()
-				# (lossD + lamD * reguD).backward() # backward prop with some regularization
+
 				optD.step()
 				dt4 += time.clock()-t3
 			else:
 				t2 = time.clock()
 				optG.zero_grad()
 				lossG = - objective(netD(real), netD(fake))
+				
 				dt2 += time.clock()-t2
-
 				t4 = time.clock()
+				
 				(lossG).backward()
 				optG.step()
+				
 				dt4 += time.clock() - t4
 		
 
@@ -185,6 +184,8 @@ def main():
 		if (i % int(opt.n_iterations/10))==0:
 			# print 'Iteration', i, 'lossD =', np.round(lossD.item(), 6), 'lossG =', np.round(lossG.item(), 6), 'reguD =', np.round(reguD.item(), 6)
 			print 'Iteration', i, 'lossD =', np.round(lossD.item(), 6), 'lossG =', np.round(lossG.item(), 6)
+			
+
 			if opt.sample_type=='2d_gaussian':
 				mus = [0.0, 0.0]
 				sigs = [1.0, 1.0]
@@ -223,7 +224,6 @@ def main():
 
 	
 	plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
-
 	print 'frame_dir:', frame_dir
 	make_gif(frame_dir)
 
