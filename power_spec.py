@@ -1,4 +1,13 @@
+import sys
+import matplotlib
+if sys.platform=='darwin':
+    base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
+    matplotlib.use('tkAgg')
+elif sys.platform=='linux2':
+    base_dir = '/home1/06224/rfederst/gan-work/results/'
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
 import numpy as np
 from scipy import interpolate
 
@@ -9,17 +18,24 @@ def fftIndgen(n):
     b = [-i for i in b]
     return a + b
 
-def gaussian_random_field(Pk = lambda k : k**-3.0, size = 100):
+def gaussian_random_field(n_samples, alpha, size = 100):
     def Pk2(kx, ky):
         if kx == 0 and ky == 0:
             return 0.0
-        return np.sqrt(Pk(np.sqrt(kx**2 + ky**2)))
-    noise = np.fft.fft2(np.random.normal(size = (size, size)))
+        return np.sqrt((np.sqrt(kx**2 + ky**2)**alpha))
+
+    grfs = np.zeros((n_samples, size, size))
+    
+    noise = np.fft.fft2(np.random.normal(size = (n_samples, size, size)))
+
     amplitude = np.zeros((size,size))
     for i, kx in enumerate(fftIndgen(size)):
         for j, ky in enumerate(fftIndgen(size)):            
             amplitude[i, j] = Pk2(kx, ky)
-    return np.fft.ifft2(noise * amplitude)
+
+    grfs = np.fft.ifft2(noise * amplitude, axes=(-2,-1))
+        
+    return grfs.real
    
 def power2DMean(k, power_interpolation, size, N=256):
     """ Mean 2D Power works! """
