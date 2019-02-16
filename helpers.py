@@ -16,16 +16,10 @@ if sys.platform=='darwin':
 elif sys.platform=='linux2':
     base_dir = '/home1/06224/rfederst/gan-work/results/'
     matplotlib.use('Agg')
-#matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 
 nparam_dict = dict({'2d_gaussian':5, '1d_gaussian':2, 'bernoulli':2, 'ring':2, 'grid':2})
 outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2, 'grid':2})
-
-#if sys.platform=='darwin':
-#    base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
-#elif sys.platform=='linux2':
-#    base_dir = '/home1/06224/rfederst/gan-work/results/'
 
 Device = 'cpu'
 
@@ -61,9 +55,6 @@ def save_params(dir, opt):
     # save parameters as dictionary, then pickle them to txt file
     param_dict = vars(opt)
     print param_dict
-    
-    param_dict['n_cond_params'] = nparam_dict[opt.sample_type]
-    param_dict['n_out'] = outparam_dict[opt.sample_type]
     
     with open(dir+'/params.txt', 'w') as file:
         file.write(pickle.dumps(param_dict))
