@@ -25,7 +25,7 @@ parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, def
 parser.add_argument('--b1', type=float, default=0.9, help='adam: decay of first order momentum of gradient')
 parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of first order momentum of gradient')
 parser.add_argument('--cuda', action='store_true', help='enables cuda')
-parser.add_argument('--ngpu', type=int, default=4, help='number of GPUs to use')
+parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
 parser.add_argument('--netD', default='', help="path to netD (to continue training)")
 parser.add_argument('--manualSeed', type=int, help='manual seed')
@@ -34,17 +34,23 @@ opt = parser.parse_args()
 print(opt)
 
 timestr = time.strftime("%Y%m%d-%H%M%S")
+n_powers = int(np.log2(opt.imageSize)-2)
 
+sizes = np.zeros(n_powers)
+for i in xrange(0, n_powers):
+	sizes[i] = int(2 ** i)
+
+sizes = np.flip(sizes)
 
 if opt.manualSeed is None:
-    opt.manualSeed = random.randint(1, 10000)
+	opt.manualSeed = random.randint(1, 10000)
 print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
 cudnn.benchmark = True
 if torch.cuda.is_available() and not opt.cuda:
-    print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+	print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 
 device = torch.device("cuda:0" if opt.cuda else "cpu")
@@ -58,17 +64,17 @@ fake_dir = frame_dir+'/fake'
 os.makedirs(fake_dir)
 
 # Initialize Generator
-netG = DC_Generator(opt.ngpu, nc, opt.latent_dim, opt.ngf).to(device)
+netG = DC_Generator(opt.ngpu, nc, opt.latent_dim, opt.ngf, sizes).to(device)
 netG.apply(weights_init)
 if opt.netG != '':
-    netG.load_state_dict(torch.load(opt.netG))
+	netG.load_state_dict(torch.load(opt.netG))
 print(netG)
 
 # Initialize Discriminator
-netD = DC_Discriminator(opt.ngpu, nc, opt.ndf).to(device)
+netD = DC_Discriminator(opt.ngpu, nc, opt.ndf, sizes).to(device)
 netD.apply(weights_init)
 if opt.netD != '':
-    netD.load_state_dict(torch.load(opt.netD))
+	netD.load_state_dict(torch.load(opt.netD))
 print(netD)
 
 # Set loss
@@ -85,59 +91,59 @@ optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 lossD_vals, lossG_vals = [[], []]
 
 for i in xrange(opt.n_iterations):
-    ############################
-    # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-    ###########################
-    # train with real
-    netD.zero_grad()
-    data = torch.from_numpy(gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize))
-    real_cpu = data.to(device)
-    label = torch.full((opt.batchSize,), real_label, device=device)
+	############################
+	# (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+	###########################
+	# train with real
+	netD.zero_grad()
+	data = torch.from_numpy(gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize))
+	real_cpu = data.to(device)
+	label = torch.full((opt.batchSize,), real_label, device=device)
 
-    # reshape needed for images with one channel
-    real_cpu = torch.unsqueeze(real_cpu, 1).float()
+	# reshape needed for images with one channel
+	real_cpu = torch.unsqueeze(real_cpu, 1).float()
 
-    output = netD(real_cpu)
-    errD_real = criterion(output, label)
-    errD_real.backward()
-    D_x = output.mean().item()
+	output = netD(real_cpu)
+	errD_real = criterion(output, label)
+	errD_real.backward()
+	D_x = output.mean().item()
 
-    # train with fake
-    noise = torch.randn(opt.batchSize, opt.latent_dim, 1, 1, device=device)
-    fake = netG(noise)
-    label.fill_(fake_label)
-    output = netD(fake.detach())
-    errD_fake = criterion(output, label)
-    errD_fake.backward()
-    D_G_z1 = output.mean().item()
-    errD = errD_real + errD_fake
-    optimizerD.step()
+	# train with fake
+	noise = torch.randn(opt.batchSize, opt.latent_dim, 1, 1, device=device)
+	fake = netG(noise)
+	label.fill_(fake_label)
+	output = netD(fake.detach())
+	errD_fake = criterion(output, label)
+	errD_fake.backward()
+	D_G_z1 = output.mean().item()
+	errD = errD_real + errD_fake
+	optimizerD.step()
 
-    ############################
-    # (2) Update G network: maximize log(D(G(z)))
-    ###########################
-    netG.zero_grad()
-    label.fill_(real_label)  # fake labels are real for generator cost
-    output = netD(fake)
-    errG = criterion(output, label)
-    errG.backward()
-    D_G_z2 = output.mean().item()
-    optimizerG.step()
+	############################
+	# (2) Update G network: maximize log(D(G(z)))
+	###########################
+	netG.zero_grad()
+	label.fill_(real_label)  # fake labels are real for generator cost
+	output = netD(fake)
+	errG = criterion(output, label)
+	errG.backward()
+	D_G_z2 = output.mean().item()
+	optimizerG.step()
 
-    lossG_vals.append(errG.item())
-    lossD_vals.append(errD.item())
+	lossG_vals.append(errG.item())
+	lossD_vals.append(errD.item())
 
-    print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
-          % (i, opt.n_iterations,
-             errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
-    if i % 10 == 0:
-        vutils.save_image(real_cpu[:4],
-                '%s/real_samples.png' % frame_dir,
-                normalize=True)
-        fake = netG(fixed_noise)
-        vutils.save_image(fake.detach()[:4],
-                '%s/fake_samples_i_%03d.png' % (fake_dir, i),
-                normalize=True)
+	print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+		  % (i, opt.n_iterations,
+			 errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+	if i % 10 == 0:
+		vutils.save_image(real_cpu[:4],
+				'%s/real_samples.png' % frame_dir,
+				normalize=True)
+		fake = netG(fixed_noise)
+		vutils.save_image(fake.detach()[:4],
+				'%s/fake_samples_i_%03d.png' % (fake_dir, i),
+				normalize=True)
 
 
 plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
