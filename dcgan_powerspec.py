@@ -22,7 +22,7 @@ parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
 parser.add_argument('--n_iterations', type=int, default=10, help='number of is to train for')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
-parser.add_argument('--b1', type=float, default=0.9, help='adam: decay of first order momentum of gradient')
+parser.add_argument('--b1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
 parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of first order momentum of gradient')
 parser.add_argument('--cuda', action='store_true', help='enables cuda')
 parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
@@ -40,7 +40,7 @@ sizes = np.zeros(n_powers)
 for i in xrange(0, n_powers):
 	sizes[i] = int(2 ** i)
 
-sizes = np.flip(sizes)
+sizes = np.flip(sizes, 0)
 
 if opt.manualSeed is None:
 	opt.manualSeed = random.randint(1, 10000)
@@ -126,32 +126,30 @@ for i in xrange(opt.n_iterations):
 	label.fill_(real_label)  # fake labels are real for generator cost
 	output = netD(fake)
 	errG = criterion(output, label)
+        #print(errG.grad, errD.grad)
 	errG.backward()
 	D_G_z2 = output.mean().item()
 	optimizerG.step()
 
 	lossG_vals.append(errG.item())
 	lossD_vals.append(errD.item())
+        if opt.n_iterations > 1000:
+                if i % int(opt.n_iterations/1000) == 0:
+                        print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+                              % (i, opt.n_iterations,
+                                 errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+                        vutils.save_image(real_cpu[:4],
+                                          '%s/real_samples.png' % frame_dir,
+                                          normalize=True)
+                        fake = netG(fixed_noise)
+                        #vutils.save_image(fake.detach()[:4],
+                        #		'%s/fake_samples_i_%03d.png' % (fake_dir, i),
+                        #			normalize=True)
 
-	print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
-		  % (i, opt.n_iterations,
-			 errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
-	if i % 10 == 0:
-		vutils.save_image(real_cpu[:4],
-				'%s/real_samples.png' % frame_dir,
-				normalize=True)
-		fake = netG(fixed_noise)
-		vutils.save_image(fake.detach()[:4],
-				'%s/fake_samples_i_%03d.png' % (fake_dir, i),
-				normalize=True)
-
-
-plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
 
 save_nn(netG, new_dir+'/netG')
 save_nn(netD, new_dir+'/netD')
 
-make_gif(fake_dir)
 save_params(new_dir, opt)
-
-
+plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
+make_gif(fake_dir)

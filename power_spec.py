@@ -10,6 +10,37 @@ import matplotlib.pyplot as plt
 
 import numpy as np
 from scipy import interpolate
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms, utils
+
+class GRFDataset(Dataset):
+    def __init__(self, root_dir, nsamp=10, transform=None):
+        """
+        Args:
+            root_dir (string): Directory with all the images.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        
+        self.root_dir = root_dir
+        self.transform = transform
+        self.ngrfs = nsamp
+
+    def __len__(self):
+        return self.ngrfs
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.root_dir, 'grf_'+str(idx)+'.fits')
+        image = fits.open(img_name)
+        grf = image[0].data
+        params = image[0].header
+        sample = {'image': grf, 'params':params}
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
+
 
 def fftIndgen(n):
     a = range(0, n/2+1)
@@ -51,6 +82,14 @@ def power2DMean(k, power_interpolation, size, N=256):
 def func_powerlaw(x, m, c):
     return x**m * c
     
+def generate_grf_dataset(nsamp, alpha, size):
+    ims = gaussian_random_field(nsamp, alpha, size=size)
+    for i, im in enumerate(ims):
+        hdr = fits.header.Header()
+        hdr['imdim']=size
+        hdr['alpha']=alpha
+        fits.writeto('data/ps'+str(size)+'/grf_'+str(i)+'.fits', im, hdr, overwrite=True) 
+    print('Saved '+str(nsamp)+' GRF realizations.')
 
 def fit_2d_powerspectrum(image, dspace = 1):
 
@@ -87,7 +126,7 @@ def plot_powerspec_and_field(k, power_interpolation, best_fit, field):
     plt.imshow(field.real, interpolation='none')
     plt.subplot(1,2,2)
     plt.title('Power Spectrum')
-    plt.plot(k, line(np.log10(k)), color='g', label=line)
+    plt.plot(k, best_fit(np.log10(k)), color='g', label=best_fit)
     plt.scatter(k, np.log10(power2DMean(k, power_interpolation, pspec_size)), label='Noise Spec')
     plt.ylabel('log10(Power)')
     plt.xlabel('k')
