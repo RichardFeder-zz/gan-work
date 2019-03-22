@@ -8,6 +8,7 @@ import sys
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
+from torch.utils import data
 
 import matplotlib
 if sys.platform=='darwin':
@@ -39,6 +40,16 @@ def create_directories(time_string):
     print frame_dir
     return new_dir, frame_dir
 
+def make_size_array(imgsize):
+
+    n_powers = int(np.log2(imgsize)-2)
+    sizes = np.zeros(n_powers)
+    for i in xrange(0, n_powers):
+        sizes[i] = int(2 ** i)
+    sizes = np.flip(sizes, 0)
+
+    return sizes
+
 
 def objective_wgan(fakeD, realD):
     return fakeD.mean() - realD.mean()
@@ -64,8 +75,6 @@ def save_params(dir, opt):
         for key in param_dict:
             file2.write(key+': '+str(param_dict[key])+'\n')
     file2.close()
-
-
 
 
 def init_loss(loss_func):
@@ -271,5 +280,44 @@ def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
     else:
         return s, conditional_params
 
+
+def generate_grf_dataset(nsamp, alpha, size):
+    ims = gaussian_random_field(nsamp, alpha, size=size)
+    for i, im in enumerate(ims):
+        hdr = fits.header.Header()
+        hdr['imdim']=size
+        hdr['alpha']=alpha
+        fits.writeto('data/ps'+str(size)+'/grf_'+str(i)+'.fits', im, hdr, overwrite=False) 
+    print('Saved '+str(nsamp)+' GRF realizations.')
+
+
+class GRFDataset(data.Dataset):
+    def __init__(self, root_dir, nsamp=10, transform=None):
+        """
+        Args:
+            root_dir (string): Directory with all the images.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        
+        self.root_dir = root_dir
+        self.transform = transform
+        self.ngrfs = nsamp
+
+    def __len__(self):
+        return self.ngrfs
+
+    def __getitem__(self, idx):
+        img_name = os.path.join(self.root_dir, 'grf_'+str(idx)+'.fits')
+        image = fits.open(img_name)
+        grf = image[0].data
+        params = image[0].header
+        sample = {'image': grf, 'params':params}
+
+        # if self.transform:
+        #     sample = self.transform(sample)
+
+        return sample
+    
 
 
