@@ -95,7 +95,7 @@ params = {'batch_size': opt.batchSize,
 
 
 if opt.trainSize > 0:
-	train_set = GRFDataset(root_dir='data/ps'+str(opt.imageSize))
+	train_set = GRFDataset(root_dir='data/ps'+str(opt.imageSize), nsamp=opt.trainSize)
 	training_generator = data.DataLoader(train_set, **params)
 
 
@@ -108,10 +108,15 @@ class GAN_optimization():
 		self.netD = netD
 		self.netG = netG
 		self.criterion = criterion
+		if opt.trainSize > 0:
+			self.batchSize = np.minimum(opt.trainSize, opt.batchSize)
+		else:
+			self.batchSize = opt.batchSize 
 
 	def single_train_step(self, real_cpu):
 		self.netD.zero_grad()
-		label = torch.full((opt.batchSize,), real_label, device=device)	
+
+		label = torch.full((self.batchSize,), real_label, device=device)	
 		# reshape needed for images with one channel
 		real_cpu = torch.unsqueeze(real_cpu, 1).float()
 		output = self.netD(real_cpu)
@@ -120,7 +125,7 @@ class GAN_optimization():
 		D_x = output.mean().item()
 
 		# train with fake
-		noise = torch.randn(opt.batchSize, opt.latent_dim, 1, 1, device=device)
+		noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
 		fake = self.netG(noise)
 		label.fill_(fake_label)
 		output = self.netD(fake.detach())
@@ -157,9 +162,8 @@ for i in xrange(opt.n_epochs):
 	
 	# if limited size dataset, iterate through all data in dataloader
 	if opt.trainSize > 0:
-		for j, local_batch in enumerate(training_generator):
-			print('j:', j)
-			real_cpu = local_batch.to(device)
+		for local_batch in training_generator:
+			real_cpu = local_batch['image'].to(device)
 			errD, errG = ganopt.single_train_step(real_cpu)
 			lossG_vals.append(errG.item())
 			lossD_vals.append(errD.item())
@@ -172,9 +176,6 @@ for i in xrange(opt.n_epochs):
 		print(errD.item(), errG.item())
 		lossG_vals.append(errG.item())
 		lossD_vals.append(errD.item())
-
-
-
 
 
 	# data = torch.from_numpy(gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize))
@@ -225,14 +226,17 @@ for i in xrange(opt.n_epochs):
                         vutils.save_image(real_cpu[:4],
                                           '%s/real_samples.png' % frame_dir,
                                           normalize=True)
-                        fake = netG(fixed_noise)
-                        #vutils.save_image(fake.detach()[:4],
-                        #		'%s/fake_samples_i_%03d.png' % (fake_dir, i),
-                        #			normalize=True)
+                        fake = ganopt.netG(fixed_noise)
+                        vutils.save_image(fake.detach()[:4],
+                        		'%s/fake_samples_i_%03d.png' % (fake_dir, i),
+                        			normalize=True)
+fake = ganopt.netG(fixed_noise)
+vutils.save_image(fake.detach()[:4],
+		'%s/fake_samples_final.png' % (fake_dir),
+			normalize=True)
 
-
-save_nn(netG, new_dir+'/netG')
-save_nn(netD, new_dir+'/netD')
+save_nn(ganopt.netG, new_dir+'/netG')
+save_nn(ganopt.netD, new_dir+'/netD')
 
 save_params(new_dir, opt)
 plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)

@@ -14,9 +14,16 @@ def garb_coll():
             if 'params.txt' in os.listdir(timedir):
                 p = open(timedir+'/params.txt')
                 pdict = pickle.load(p)
-                if pdict['n_iterations'] < 100:
+                try:
+                    n_epochs = pdict['n_iterations']
+                except:
+                    try:
+                        n_epochs = pdict['n_epochs']
+                    except:
+                        continue
+                if n_epochs < 100:
                     mv_bool = True
-                    print pdict['n_iterations']
+                    print n_epochs
                     os.rename(timedir, basedir+'garb/'+str(file))
                     n+=1
             else:

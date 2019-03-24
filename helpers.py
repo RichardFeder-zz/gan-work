@@ -4,6 +4,7 @@ import cPickle as pickle
 from torch.nn.functional import binary_cross_entropy_with_logits as bce
 import imageio
 import sys
+from astropy.io import fits
 
 from torch.autograd import Variable, grad
 import torch.nn as nn
@@ -132,9 +133,13 @@ def plot(x, y, frame_directory=None, iteration=0):
 
 def make_gif(dir):
     images = []
-    for file in os.listdir(dir):
-        images.append(imageio.imread(dir+'/'+file))
-    imageio.mimsave(dir+'/movie.gif', images, fps=3)
+    files = os.listdir(dir)
+    if len(files) > 0:
+        for file in os.listdir(dir):
+            images.append(imageio.imread(dir+'/'+file))
+        imageio.mimsave(dir+'/movie.gif', images, fps=3)
+    else:
+        print('No images to save for make_gif().')
 
 def sample_noise(bs, d):
     z = torch.randn(bs, d).float()
@@ -146,18 +151,20 @@ def plot_loss_iterations(lossD_vals, lossG_vals, directory):
 
     lossG_vals = np.abs(lossG_vals)
     lossD_vals = np.abs(lossD_vals)
+
+
     np.savetxt(directory+'/lossG.txt', lossG_vals)
     np.savetxt(directory+'/lossD.txt', lossD_vals)
 
     plt.figure(figsize=(8,4))
     plt.subplot(1,2,1)
-    plt.scatter(list(torch.linspace(1, n, steps=n)), lossD_vals, label='Discriminator', s=2, alpha=0.5)
+    plt.scatter(np.arange(n), lossD_vals, label='Discriminator', s=2, alpha=0.5)
     plt.legend()
     plt.yscale('log')
     plt.xlabel('Iteration')
     plt.ylabel('Loss')
     plt.subplot(1,2,2)
-    plt.scatter(list(torch.linspace(1, n, steps=n)), lossG_vals, label='Generator', s=2, alpha=0.5)
+    plt.scatter(np.arange(n), lossG_vals, label='Generator', s=2, alpha=0.5)
     plt.xlabel('Iteration')
     plt.ylabel('Loss')
     plt.legend()
@@ -298,6 +305,8 @@ class GRFDataset(data.Dataset):
             root_dir (string): Directory with all the images.
             transform (callable, optional): Optional transform to be applied
                 on a sample.
+
+            nsamp (int): 
         """
         
         self.root_dir = root_dir
@@ -310,7 +319,7 @@ class GRFDataset(data.Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, 'grf_'+str(idx)+'.fits')
         image = fits.open(img_name)
-        grf = image[0].data
+        grf = image[0].data.byteswap().newbyteorder()
         params = image[0].header
         sample = {'image': grf, 'params':params}
 
