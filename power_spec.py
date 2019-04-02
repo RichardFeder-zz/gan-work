@@ -1,5 +1,9 @@
 import sys
 import matplotlib
+from torch.utils import data
+import os
+from astropy.io import fits 
+
 if sys.platform=='darwin':
     base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
     matplotlib.use('tkAgg')
@@ -13,15 +17,16 @@ from scipy import interpolate
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 
-class GRFDataset(Dataset):
+class GRFDataset(data.Dataset):
     def __init__(self, root_dir, nsamp=10, transform=None):
+        """                                                                                                                                                                                         
+        Args:                                                                                                                                                                                       
+            root_dir (string): Directory with all the images.                                                                                                                                       
+            transform (callable, optional): Optional transform to be applied                                                                                                                        
+                on a sample.                                                                                                                                                                                                                                                                                                                                                                           
+            nsamp (int):                                                                                                                                                                            
         """
-        Args:
-            root_dir (string): Directory with all the images.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
-        
+
         self.root_dir = root_dir
         self.transform = transform
         self.ngrfs = nsamp
@@ -32,12 +37,14 @@ class GRFDataset(Dataset):
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, 'grf_'+str(idx)+'.fits')
         image = fits.open(img_name)
-        grf = image[0].data
+        grf = image[0].data.byteswap().newbyteorder()
         params = image[0].header
-        sample = {'image': grf, 'params':params}
 
         if self.transform:
-            sample = self.transform(sample)
+            nrot = np.random.choice([0, 1, 2, 3])
+            grf = np.rot90(grf, nrot).copy()
+
+        sample = {'image': grf, 'params':params}
 
         return sample
 
@@ -65,8 +72,9 @@ def gaussian_random_field(n_samples, alpha, size = 100):
             amplitude[i, j] = Pk2(kx, ky)
 
     grfs = np.fft.ifft2(noise * amplitude, axes=(-2,-1))
-        
-    return grfs.real
+
+    #return grfs.real
+    return grfs.real, np.array(noise*amplitude)
    
 def power2DMean(k, power_interpolation, size, N=256):
     """ Mean 2D Power works! """
@@ -134,3 +142,12 @@ def plot_powerspec_and_field(k, power_interpolation, best_fit, field):
     plt.xlim(0.9*np.min(k), np.max(k)*1.1)
     plt.legend()
     plt.show()
+
+def generate_grf_dataset(nsamp, alpha, size):
+    ims = gaussian_random_field(nsamp, alpha, size=size)
+    for i, im in enumerate(ims):
+        hdr = fits.header.Header()
+        hdr['imdim']=size
+        hdr['alpha']=alpha
+        fits.writeto('data/ps'+str(size)+'/grf_'+str(i)+'.fits', im, hdr, overwrite=False)
+    print('Saved '+str(nsamp)+' GRF realizations.')

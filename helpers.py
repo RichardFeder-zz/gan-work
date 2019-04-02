@@ -5,7 +5,7 @@ from torch.nn.functional import binary_cross_entropy_with_logits as bce
 import imageio
 import sys
 from astropy.io import fits
-
+import torchvision.transforms.functional as TF
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
@@ -287,46 +287,14 @@ def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
     else:
         return s, conditional_params
 
+def loglike_scaling(im, a=4):
+    s = 2*im/(im+a)-1
+    return s
 
-def generate_grf_dataset(nsamp, alpha, size):
-    ims = gaussian_random_field(nsamp, alpha, size=size)
-    for i, im in enumerate(ims):
-        hdr = fits.header.Header()
-        hdr['imdim']=size
-        hdr['alpha']=alpha
-        fits.writeto('data/ps'+str(size)+'/grf_'+str(i)+'.fits', im, hdr, overwrite=False) 
-    print('Saved '+str(nsamp)+' GRF realizations.')
+def inverse_loglike_scaling(s, a=4):
+    im = a*(s+1)/(1-s)
+    return im
 
-
-class GRFDataset(data.Dataset):
-    def __init__(self, root_dir, nsamp=10, transform=None):
-        """
-        Args:
-            root_dir (string): Directory with all the images.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-
-            nsamp (int): 
-        """
-        
-        self.root_dir = root_dir
-        self.transform = transform
-        self.ngrfs = nsamp
-
-    def __len__(self):
-        return self.ngrfs
-
-    def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, 'grf_'+str(idx)+'.fits')
-        image = fits.open(img_name)
-        grf = image[0].data.byteswap().newbyteorder()
-        params = image[0].header
-        sample = {'image': grf, 'params':params}
-
-        # if self.transform:
-        #     sample = self.transform(sample)
-
-        return sample
     
 
 

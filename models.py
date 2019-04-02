@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import numpy as np
-
+import cPickle as pickle
 
 # custom weights initialization called on netG and netD
 def weights_init(m):
@@ -14,6 +14,16 @@ def weights_init(m):
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0)
 
+def restore_conv_nn_new(filepath, sizes):
+    # get config parameters from run and use to construct Perceptron object
+    filen = open(filepath+'/params.txt','r')
+    pdict = pickle.load(filen)
+    model = DC_Generator(pdict['ngpu'], 1, pdict['latent_dim'], pdict['ngf'], sizes)
+    
+    model.load_state_dict(torch.load(filepath+'/netG', map_location='cpu'))
+    model.eval()
+    
+    return model, pdict
 
 class Perceptron(torch.nn.Module):
     def __init__(self, sizes, activation, final=None, sigmoid=False):
@@ -57,9 +67,10 @@ class DC_Generator(nn.Module):
         for i, size in enumerate(sizes):
             print(i, size)
             if i==0:
-                layers.append(nn.ConvTranspose2d(nz, ngf*int(size), 4, 1, 0, bias=False))
+                layers.append(nn.ConvTranspose2d(nz, ngf*int(size), 4, stride=1, padding=0, bias=False))
             else:
-                layers.append(nn.ConvTranspose2d(outc, ngf*int(size), 4, 2, 1, bias=False))
+                layers.append(nn.ConvTranspose2d(outc, ngf*int(size), 2, stride=2, padding=0, bias=False))
+          #      layers.append(nn.ConvTranspose2d(outc, ngf*int(size), 4, stride=2, padding=1, bias=False))
             outc = ngf*int(size) 
             layers.append(nn.BatchNorm2d(outc))
             layers.append(nn.ReLU(True))

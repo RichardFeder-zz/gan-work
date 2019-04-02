@@ -9,6 +9,7 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torchvision.utils as vutils
+from torchvision import transforms
 from torch.utils import data
 from power_spec import *
 from models import *
@@ -93,9 +94,8 @@ params = {'batch_size': opt.batchSize,
           'num_workers': opt.ngpu}
 
 
-
 if opt.trainSize > 0:
-	train_set = GRFDataset(root_dir='data/ps'+str(opt.imageSize), nsamp=opt.trainSize)
+	train_set = GRFDataset(root_dir='data/ps'+str(opt.imageSize), nsamp=opt.trainSize, transform=True)
 	training_generator = data.DataLoader(train_set, **params)
 
 
@@ -113,40 +113,84 @@ class GAN_optimization():
 		else:
 			self.batchSize = opt.batchSize 
 
-	def single_train_step(self, real_cpu):
-		self.netD.zero_grad()
 
-		label = torch.full((self.batchSize,), real_label, device=device)	
+        def discriminator_step(self, real_cpu):
+                self.netD.zero_grad()
+
+                label = torch.full((self.batchSize,), real_label, device=device)
+                # reshape needed for images with one channel                                                                                                                                         
+                real_cpu = torch.unsqueeze(real_cpu, 1).float()
+                output = self.netD(real_cpu)
+                errD_real = self.criterion(output, label)
+                errD_real.backward()
+                D_x = output.mean().item()
+
+                # train with fake                                                                                                                                                                    
+                noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
+                fake = self.netG(noise)
+                label.fill_(fake_label)
+                output = self.netD(fake.detach())
+                errD_fake = self.criterion(output, label)
+                errD_fake.backward()
+                D_G_z1 = output.mean().item()
+                errD = errD_real + errD_fake
+                optimizerD.step()
+
+                return errD, D_x, D_G_z1
+
+        def generator_step(self):
+                noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
+                fake = self.netG(noise)
+                label = torch.full((self.batchSize,), real_label, device=device)
+                self.netG.zero_grad()
+                label.fill_(real_label)  # fake labels are real for generator cost                                                                                                                   
+                output = self.netD(fake)
+                errG = self.criterion(output, label)
+                errG.backward()
+                D_G_z2 = output.mean().item()
+                self.optimizerG.step()
+                return errG, D_G_z2
+
+        def single_train_step(self, real_cpu):
+                ############################                                                                                                                                    
+                # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))                                                                                                    
+                ###########################                                                                                                                                               
+                # train with real  
+		errD, D_x, D_G_z1 = self.discriminator_step(real_cpu)
+                for i in xrange(2):
+                        errG, D_G_z2 = self.generator_step()
+                #self.netD.zero_grad()
+
+		#label = torch.full((self.batchSize,), real_label, device=device)	
 		# reshape needed for images with one channel
-		real_cpu = torch.unsqueeze(real_cpu, 1).float()
-		output = self.netD(real_cpu)
-		errD_real = self.criterion(output, label)
-		errD_real.backward()
-		D_x = output.mean().item()
+		#real_cpu = torch.unsqueeze(real_cpu, 1).float()
+		#output = self.netD(real_cpu)
+		#errD_real = self.criterion(output, label)
+		#errD_real.backward()
+		#D_x = output.mean().item()
 
 		# train with fake
-		noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
-		fake = self.netG(noise)
-		label.fill_(fake_label)
-		output = self.netD(fake.detach())
-		errD_fake = self.criterion(output, label)
-		errD_fake.backward()
-		D_G_z1 = output.mean().item()
-		errD = errD_real + errD_fake
-		optimizerD.step()
+		#noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
+		#fake = self.netG(noise)
+		#label.fill_(fake_label)
+		#output = self.netD(fake.detach())
+		#errD_fake = self.criterion(output, label)
+		#errD_fake.backward()
+		#D_G_z1 = output.mean().item()
+		#errD = errD_real + errD_fake
+		#optimizerD.step()
 
 		############################
 		# (2) Update G network: maximize log(D(G(z)))
 		###########################
-		self.netG.zero_grad()
-		label.fill_(real_label)  # fake labels are real for generator cost
-		output = self.netD(fake)
-		errG = self.criterion(output, label)
-	        #print(errG.grad, errD.grad)
-		errG.backward()
-		D_G_z2 = output.mean().item()
-		self.optimizerG.step()
-		return errD, errG
+		#self.netG.zero_grad()
+		#label.fill_(real_label)  # fake labels are real for generator cost
+		#output = self.netD(fake)
+		#errG = self.criterion(output, label)
+		#errG.backward()
+		#D_G_z2 = output.mean().item()
+		#self.optimizerG.step()
+		return errD, errG, D_x, D_G_z1, D_G_z2
 
 
 ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
@@ -155,81 +199,61 @@ ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
 
 
 for i in xrange(opt.n_epochs):
-	############################
-	# (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-	###########################
-	# train with real
-	
-	# if limited size dataset, iterate through all data in dataloader
+
 	if opt.trainSize > 0:
+                lossGs, lossDs = [], []
 		for local_batch in training_generator:
 			real_cpu = local_batch['image'].to(device)
-			errD, errG = ganopt.single_train_step(real_cpu)
-			lossG_vals.append(errG.item())
-			lossD_vals.append(errD.item())
+			errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
+			lossGs.append(errG.item())
+                        lossDs.append(errD.item())
 
+                        #lossG_vals.append(errG.item())
+			#lossD_vals.append(errD.item())
+                lossG_vals.append(np.mean(np.array(lossGs)))
+                lossD_vals.append(np.mean(np.array(lossDs)))
 
 	else:
-		data = torch.from_numpy(gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize))
-		real_cpu = data.to(device)
-		errD, errG = ganopt.single_train_step(real_cpu)
-		print(errD.item(), errG.item())
+                dat, amps = gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize)
+		#data = torch.from_numpy(gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize))
+                #real_cpu = data.to(device)
+                normreal = amps.real/np.max(np.abs(amps.real))
+                real_cpu = torch.from_numpy(normreal).to(device)
+		errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
 		lossG_vals.append(errG.item())
 		lossD_vals.append(errD.item())
 
 
-	# data = torch.from_numpy(gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize))
-	# real_cpu = data.to(device)
-	# label = torch.full((opt.batchSize,), real_label, device=device)
-
-	# # reshape needed for images with one channel
-	# real_cpu = torch.unsqueeze(real_cpu, 1).float()
-
-	# output = netD(real_cpu)
-	# errD_real = criterion(output, label)
-	# errD_real.backward()
-	# D_x = output.mean().item()
-
-	# # train with fake
-	# noise = torch.randn(opt.batchSize, opt.latent_dim, 1, 1, device=device)
-	# fake = netG(noise)
-	# label.fill_(fake_label)
-	# output = netD(fake.detach())
-	# errD_fake = criterion(output, label)
-	# errD_fake.backward()
-	# D_G_z1 = output.mean().item()
-	# errD = errD_real + errD_fake
-	# optimizerD.step()
-
-	# ############################
-	# # (2) Update G network: maximize log(D(G(z)))
-	# ###########################
-	# netG.zero_grad()
-	# label.fill_(real_label)  # fake labels are real for generator cost
-	# output = netD(fake)
-	# errG = criterion(output, label)
- #        #print(errG.grad, errD.grad)
-	# errG.backward()
-	# D_G_z2 = output.mean().item()
-	# optimizerG.step()
-
-	# lossG_vals.append(errG.item())
-	# lossD_vals.append(errD.item())
-
-
-
         if opt.n_epochs > 1000:
-                if i % int(opt.n_epochs/1000) == 0:
+                if i % int(opt.n_epochs/100) == 0:
                         print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                               % (i, opt.n_epochs,
                                  errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
-                        vutils.save_image(real_cpu[:4],
-                                          '%s/real_samples.png' % frame_dir,
-                                          normalize=True)
+                        #vutils.save_image(real_cpu[:4],
+                        #                  '%s/real_samples.png' % frame_dir,
+                        #                  normalize=True)
+        
+                if i % int(opt.n_epochs/10) == 1:
                         fake = ganopt.netG(fixed_noise)
                         vutils.save_image(fake.detach()[:4],
                         		'%s/fake_samples_i_%03d.png' % (fake_dir, i),
                         			normalize=True)
+
+
+        else:
+                print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+                              % (i, opt.n_epochs, errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+
+                if i % int(opt.n_epochs/10) == 1:
+                        fake = ganopt.netG(fixed_noise)
+                        vutils.save_image(fake.detach()[:4],
+                                        '%s/fake_samples_i_%03d.png' % (fake_dir, i),
+                                                normalize=True)
+
+                #if D_G_z1 < 0.01:
+                #        print('generator not doing too hot, gonna early stop')
+                #        break
+
 fake = ganopt.netG(fixed_noise)
 vutils.save_image(fake.detach()[:4],
 		'%s/fake_samples_final.png' % (fake_dir),
