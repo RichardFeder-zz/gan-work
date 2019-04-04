@@ -287,14 +287,11 @@ def draw_true_samples(nsamp, opt, samp_type='2d_gaussian', LH=None):
     else:
         return s, conditional_params
 
-def loglike_scaling(im, a=4):
-    s = 2*im/(im+a)-1
-    return s
 
-def inverse_loglike_scaling(s, a=4):
+def inverse_loglike_transform(s, a=4):
     im = a*(s+1)/(1-s)
     return im
-
     
-
+def loglike_transform(x, a=5):
+    return (2*x/(x+a)) - 1
 
