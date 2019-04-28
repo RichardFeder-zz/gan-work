@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import numpy as np
 import cPickle as pickle
 
+
 # custom weights initialization called on netG and netD
 def weights_init(m):
     classname = m.__class__.__name__
@@ -211,25 +212,35 @@ class VAE(nn.Module):
 
 
 class DC_Generator3D(nn.Module):
-    def __init__(self, ngpu, nc, nz, ngf, sizes):
+    def __init__(self, ngpu, nc, nz, ngf, sizes, endact='tanh'):
         super(DC_Generator3D, self).__init__()
         self.ngpu = ngpu
         layers = []
 
+        
+        kernel_sizes = [4, 4, 4, 4]
+        strides = [1, 2, 2, 2]
+        paddings = [0, 1, 1, 1]
+        
         for i, size in enumerate(sizes):
-            print(i, size)
             if i==0:
-                layers.append(nn.ConvTranspose3d(nz, ngf*int(size), 4, stride=1, padding=0, bias=False))
+                layers.append(nn.ConvTranspose3d(nz, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
             else:
-                layers.append(nn.ConvTranspose3d(outc, ngf*int(size), 2, stride=2, padding=0, bias=False))
-          #      layers.append(nn.ConvTranspose2d(outc, ngf*int(size), 4, stride=2, padding=1, bias=False))                                                                           \
-                                                                                                                                                                                       
+                layers.append(nn.ConvTranspose3d(outc, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
+            #if i==0:
+            #    layers.append(nn.ConvTranspose3d(nz, ngf*int(size), 4, stride=1, padding=0, bias=False))
+            #else:
+            #    layers.append(nn.ConvTranspose3d(outc, ngf*int(size), 4, stride=2, padding=1, bias=False))
+                #layers.append(nn.ConvTranspose3d(outc, ngf*int(size), 2, stride=2, padding=0, bias=False))
             outc = ngf*int(size)
             layers.append(nn.BatchNorm3d(outc))
             layers.append(nn.ReLU(True))
-        layers.append(nn.ConvTranspose3d(outc, nc, 4, 2, 1, bias=False))
-        layers.append(nn.Tanh())
-
+        layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
+        #layers.append(nn.ConvTranspose3d(outc, nc, 2, stride=2, padding=0, bias=False))
+        if endact=='tanh': 
+            layers.append(nn.Tanh())
+        elif endact=='softplus':
+            layers.append(nn.Softplus())
         self.main = nn.Sequential(*layers)
 
     def forward(self, input):
@@ -246,16 +257,15 @@ class DC_Discriminator3D(nn.Module):
 
         layers = []
         for i, size in enumerate(np.flip(sizes, 0)):
-            print(i, size)
             if i==0:
-                layers.append(nn.Conv3d(nc, ndf*int(size), 4, 2, 1, bias=False))
+                layers.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
             else:
-                layers.append(nn.Conv3d(outc, ndf*int(size), 4, 2, 1, bias=False))
+                layers.append(nn.Conv3d(outc, ndf*int(size), 4, stride=2, padding=1, bias=False))
                 layers.append(nn.BatchNorm3d(ndf*int(size)))
             outc = ndf*int(size)
             layers.append(nn.LeakyReLU(0.2, inplace=True))
 
-        layers.append(nn.Conv3d(outc, 1, 4, 1, 0, bias=False))
+        layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
         layers.append(nn.Sigmoid())
 
         self.main = nn.Sequential(*layers)

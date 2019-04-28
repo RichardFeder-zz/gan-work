@@ -16,7 +16,8 @@ if sys.platform=='darwin':
     base_dir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
     matplotlib.use('tkAgg')
 elif sys.platform=='linux2':
-    base_dir = '/home1/06224/rfederst/gan-work/results/'
+    #base_dir = '/home1/06224/rfederst/gan-work/results/'
+    base_dir = '/work/06224/rfederst/maverick2/results/'
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
@@ -41,9 +42,9 @@ def create_directories(time_string):
     print frame_dir
     return new_dir, frame_dir
 
-def make_size_array(imgsize):
-
-    n_powers = int(np.log2(imgsize)-2)
+def make_size_array(imgsize, n_powers=None):
+    if n_powers is None:
+        n_powers = int(np.log2(imgsize)-2)
     sizes = np.zeros(n_powers)
     for i in xrange(0, n_powers):
         sizes[i] = int(2 ** i)
@@ -295,3 +296,16 @@ def inverse_loglike_transform(s, a=4):
 def loglike_transform(x, a=5):
     return (2*x/(x+a)) - 1
 
+def loglike_transform_2(x, k=5.):
+    return (1/float(k))*np.log10(x+1)
+
+def inverse_loglike_transform_2(s, k=5.):
+    return 10**(float(k)*s)-1
+
+
+def blockwise_average_3D(A,S):    
+    # A is the 3D input array
+    # S is the blocksize on which averaging is to be performed
+
+    m,n,r = np.array(A.shape)//S
+    return A.reshape(m,S[0],n,S[1],r,S[2]).mean((1,3,5))
