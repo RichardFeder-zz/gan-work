@@ -147,6 +147,17 @@ def sample_noise(bs, d):
     return Variable(z.to(Device), requires_grad=True)
 
 
+def plot_info_iterations(lossI_vals, directory):
+    n = len(lossI_vals)
+    np.savetxt(directory+'/lossI.txt', lossI_vals)
+    plt.figure()
+    plt.scatter(np.arange(n), lossI_vals, s=2)
+    plt.yscale('log')
+    plt.ylabel('Mutual Information Loss')
+    plt.xlabel('Iteration')
+    plt.savefig(directory+'/loss_I.png', bbox_inches='tight')
+    plt.close()
+
 def plot_loss_iterations(lossD_vals, lossG_vals, directory):
     n = len(lossD_vals)
 

@@ -1,5 +1,6 @@
 from __future__ import print_function
 import argparse
+import itertools
 import os
 import random
 import torch
@@ -33,6 +34,7 @@ parser.add_argument('--netG', default='', help="path to netG (to continue traini
 parser.add_argument('--netD', default='', help="path to netD (to continue training)")
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('--alpha', type=float, default=-2.0, help='Slope of power law for gaussian random field')
+parser.add_argument('--code_dim', type=int, default=0, help='latent code')
 opt = parser.parse_args()
 print(opt)
 
@@ -78,13 +80,18 @@ print(netD)
 # Set loss
 criterion = nn.BCELoss()
 
+if opt.code_dim > 0: # for infoGAN
+        mutualinfo_loss = nn.MSELoss()
+        lam_loss = 0.1 # coefficient in loss term
+
 # fixed noise used for sample generation comparisons at different points in training
 fixed_noise = torch.randn(opt.batchSize, opt.latent_dim, 1, 1, device=device)
-
 
 # set up optimizers
 optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
+if opt.code_dim > 0:
+        optimizer_info = optim.Adam(itertools.chain(netG.parameters(), netD.parameters()), lr=opt.lr, betas=(opt.b1, opt.b2))
 
 lossD_vals, lossG_vals = [[], []]
 
@@ -102,9 +109,11 @@ if opt.trainSize > 0:
 
 class GAN_optimization():
 
-	def __init__(self, optimizerD, optimizerG, netD, netG):
+	def __init__(self, optimizerD, optimizerG, netD, netG, optimizer_info=None):
 		self.optimizerD = optimizerD
 		self.optimizerG = optimizerG
+                if optimizer_info is not None:
+                        self.optimizer_info = optimizer_info
 		self.netD = netD
 		self.netG = netG
 		self.criterion = criterion
@@ -114,13 +123,30 @@ class GAN_optimization():
 			self.batchSize = opt.batchSize 
 
 
+        def info_step(self):
+                self.optimizer_info.zero_grad()
+                code_input = np.random.normal(-1, 1, (opt.batch_size, opt.code_dim))
+                noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
+                gen_input = torch.cat((noise, torch.from_numpy(code_input).float()), 1)
+                fake = self.netG(gen_input)
+                _, pred_code = self.netD(fake)
+                info_loss = lam_info * mutualinfo_loss(pred_code, code_input)
+                info_loss.backward()
+                optimizer_info.step()
+
+                return info_loss
+
         def discriminator_step(self, real_cpu):
                 self.netD.zero_grad()
 
                 label = torch.full((self.batchSize,), real_label, device=device)
                 # reshape needed for images with one channel                                                                                                                                         
                 real_cpu = torch.unsqueeze(real_cpu, 1).float()
-                output = self.netD(real_cpu)
+                if opt.code_dim > 0:
+                        output, latent_code = self.netD(real_cpu)
+                else:
+                        output = self.netD(real_cpu)
+
                 errD_real = self.criterion(output, label)
                 errD_real.backward()
                 D_x = output.mean().item()
@@ -152,14 +178,19 @@ class GAN_optimization():
                 return errG, D_G_z2
 
         def single_train_step(self, real_cpu):
-            errD, D_x, D_G_z1 = self.discriminator_step(real_cpu)
-            for i in xrange(2):
-                errG, D_G_z2 = self.generator_step()
+                errD, D_x, D_G_z1 = self.discriminator_step(real_cpu)
+                for i in xrange(2):
+                        errG, D_G_z2 = self.generator_step()
+                if opt.code_dim > 0:
+                        errI = self.info_step()
+                        return errD, errG, errI, D_x, D_G_z1, D_G_z2
 
 		return errD, errG, D_x, D_G_z1, D_G_z2
 
-
-ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
+if opt.code_dim > 0:
+        ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG, optimizer_info)
+else:
+        ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
 
 
 
@@ -167,23 +198,32 @@ ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
 for i in xrange(opt.n_epochs):
 
 	if opt.trainSize > 0:
-        lossGs, lossDs = [], []
+                lossGs, lossDs = [], []
 		for local_batch in training_generator:
 			real_cpu = local_batch['image'].to(device)
 			errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
 			lossGs.append(errG.item())
             lossDs.append(errD.item())
 
-        lossG_vals.append(np.mean(np.array(lossGs)))
-        lossD_vals.append(np.mean(np.array(lossDs)))
+            lossG_vals.append(np.mean(np.array(lossGs)))
+            lossD_vals.append(np.mean(np.array(lossDs)))
 
 	else:
-        dat, amps = gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize)
-		#data = torch.from_numpy(gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize))
-        #real_cpu = data.to(device)
-        normreal = amps.real/np.max(np.abs(amps.real))
-        real_cpu = torch.from_numpy(normreal).to(device)
-		errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
+                if opt.code_dim > 0:
+                        alphas = np.random.uniform(opt.alpha-1, opt.alpha+1, opt.batchSize)
+                        dat, amps = gaussian_random_field(opt.batchSize, alphas, opt.imageSize)
+                else:
+                        dat, amps = gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize)
+                
+                normreal = amps.real/np.max(np.abs(amps.real))
+                real_cpu = torch.from_numpy(normreal).to(device)
+		
+                if opt.code_dim > 0:
+                        real_code = torch.from_numpy(alphas).to(device)
+                        errD, errG, errI, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
+                        lossI_vals.append(errI.item())
+                else:
+                        errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
 		lossG_vals.append(errG.item())
 		lossD_vals.append(errD.item())
 
@@ -193,11 +233,13 @@ for i in xrange(opt.n_epochs):
                         print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                               % (i, opt.n_epochs,
                                  errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+                        if opt.code_dim > 0:
+                                print('Loss_I: %.4f' % (errI.item()))
                         #vutils.save_image(real_cpu[:4],
                         #                  '%s/real_samples.png' % frame_dir,
                         #                  normalize=True)
         
-                if i % int(opt.n_epochs/10) == 1:
+                if i % int(opt.n_epochs/10) == 1 and opt.code_dim==0: # temporary for now, might change with infogan
                         fake = ganopt.netG(fixed_noise)
                         vutils.save_image(fake.detach()[:4],
                         		'%s/fake_samples_i_%03d.png' % (fake_dir, i),
@@ -220,4 +262,6 @@ save_nn(ganopt.netD, new_dir+'/netD')
 
 save_params(new_dir, opt)
 plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
+if opt.code_dim > 0:
+        plot_info_iterations(np.array(lossI_vals), new_dir)
 make_gif(fake_dir)
