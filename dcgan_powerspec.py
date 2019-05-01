@@ -25,20 +25,22 @@ parser.add_argument('--latent_dim', type=int, default=100, help='size of the lat
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
 parser.add_argument('--n_epochs', type=int, default=10, help='number of is to train for')
-parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
+parser.add_argument('--lr_g', type=float, default=0.0002, help='learning rate of the generator, default=0.0002')
+parser.add_argument('--lr_d', type=float, default=0.0002, help='learning rate of the discriminator, default=0.0001')
 parser.add_argument('--b1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
 parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of first order momentum of gradient')
-parser.add_argument('--cuda', action='store_true', help='enables cuda')
+parser.add_argument('--cuda', type=bool, default=False, help='enables cuda')
 parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
 parser.add_argument('--netD', default='', help="path to netD (to continue training)")
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('--alpha', type=float, default=-2.0, help='Slope of power law for gaussian random field')
 parser.add_argument('--code_dim', type=int, default=0, help='latent code')
+parser.add_argument('--lam_info', type=float, default=1.0, help='coefficient on mutual information loss term')
 opt = parser.parse_args()
 print(opt)
 
-
+print('opt ngpu:', opt.ngpu)
 
 timestr = time.strftime("%Y%m%d-%H%M%S")
 sizes = make_size_array(opt.imageSize)
@@ -49,8 +51,8 @@ random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 
 cudnn.benchmark = True
-if torch.cuda.is_available() and not opt.cuda:
-	print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+#if torch.cuda.is_available() and not opt.cuda:
+	#print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 
 device = torch.device("cuda:0" if opt.cuda else "cpu")
@@ -64,14 +66,14 @@ fake_dir = frame_dir+'/fake'
 os.makedirs(fake_dir)
 
 # Initialize Generator
-netG = DC_Generator(opt.ngpu, nc, opt.latent_dim, opt.ngf, sizes).to(device)
+netG = DC_Generator(opt.ngpu, 1, opt.latent_dim+opt.code_dim, opt.ngf, sizes).to(device)
 netG.apply(weights_init)
 if opt.netG != '':
 	netG.load_state_dict(torch.load(opt.netG))
 print(netG)
 
 # Initialize Discriminator
-netD = DC_Discriminator(opt.ngpu, nc, opt.ndf, sizes).to(device)
+netD = DC_Discriminator(opt.ngpu, 1, opt.ndf, sizes, code_dim=opt.code_dim).to(device)
 netD.apply(weights_init)
 if opt.netD != '':
 	netD.load_state_dict(torch.load(opt.netD))
@@ -82,28 +84,23 @@ criterion = nn.BCELoss()
 
 if opt.code_dim > 0: # for infoGAN
         mutualinfo_loss = nn.MSELoss()
-        lam_loss = 0.1 # coefficient in loss term
 
 # fixed noise used for sample generation comparisons at different points in training
-fixed_noise = torch.randn(opt.batchSize, opt.latent_dim, 1, 1, device=device)
+fixed_noise = torch.randn(opt.batchSize, opt.latent_dim+opt.code_dim, 1, 1, device=device)
 
 # set up optimizers
-optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
+optimizerD = optim.Adam(netD.parameters(), lr=opt.lr_d, betas=(opt.b1, opt.b2))
+optimizerG = optim.Adam(netG.parameters(), lr=opt.lr_g, betas=(opt.b1, opt.b2))
 if opt.code_dim > 0:
-        optimizer_info = optim.Adam(itertools.chain(netG.parameters(), netD.parameters()), lr=opt.lr, betas=(opt.b1, opt.b2))
+        optimizer_info = optim.Adam(itertools.chain(netG.parameters(), netD.parameters()), lr=opt.lr_d, betas=(opt.b1, opt.b2))
 
 lossD_vals, lossG_vals = [[], []]
-
+lossI_vals = []
 # Parameters
-params = {'batch_size': opt.batchSize,
-          'shuffle': True,
-          'num_workers': opt.ngpu}
 
-
-if opt.trainSize > 0:
-	train_set = GRFDataset(root_dir='data/ps'+str(opt.imageSize), nsamp=opt.trainSize, transform=True)
-	training_generator = data.DataLoader(train_set, **params)
+#if opt.trainSize > 0:
+	#train_set = GRFDataset(root_dir='data/ps'+str(opt.imageSize), nsamp=opt.trainSize, transform=True)
+	#training_generator = data.DataLoader(train_set, **params)
 
 
 
@@ -125,12 +122,17 @@ class GAN_optimization():
 
         def info_step(self):
                 self.optimizer_info.zero_grad()
-                code_input = np.random.normal(-1, 1, (opt.batch_size, opt.code_dim))
-                noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
-                gen_input = torch.cat((noise, torch.from_numpy(code_input).float()), 1)
-                fake = self.netG(gen_input)
+                self.netG.zero_grad()
+                self.netD.zero_grad()
+                #code_input = np.random.normal(opt.alpha, 0.5, (opt.batchSize, opt.code_dim))-opt.alpha # center on zero
+                #code_input = np.random.normal(-1, 1, (opt.batch_size, opt.code_dim))
+                noise = torch.randn(self.batchSize, opt.latent_dim+opt.code_dim, 1, 1, device=device)
+                #gen_input = torch.cat((noise, torch.from_numpy(code_input).float()), 1)
+                #fake = self.netG(gen_input)
+                
+                fake = self.netG(noise)
                 _, pred_code = self.netD(fake)
-                info_loss = lam_info * mutualinfo_loss(pred_code, code_input)
+                info_loss = opt.lam_info * mutualinfo_loss(pred_code, noise[:,-1])
                 info_loss.backward()
                 optimizer_info.step()
 
@@ -143,7 +145,7 @@ class GAN_optimization():
                 # reshape needed for images with one channel                                                                                                                                         
                 real_cpu = torch.unsqueeze(real_cpu, 1).float()
                 if opt.code_dim > 0:
-                        output, latent_code = self.netD(real_cpu)
+                        output, _ = self.netD(real_cpu)
                 else:
                         output = self.netD(real_cpu)
 
@@ -152,10 +154,13 @@ class GAN_optimization():
                 D_x = output.mean().item()
 
                 # train with fake                                                                                                                                                                    
-                noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
+                noise = torch.randn(self.batchSize, opt.latent_dim+opt.code_dim, 1, 1, device=device)
                 fake = self.netG(noise)
                 label.fill_(fake_label)
-                output = self.netD(fake.detach())
+                if opt.code_dim > 0:
+                        output, _ = self.netD(fake.detach())
+                else:
+                        output = self.netD(fake.detach())
                 errD_fake = self.criterion(output, label)
                 errD_fake.backward()
                 D_G_z1 = output.mean().item()
@@ -165,12 +170,16 @@ class GAN_optimization():
                 return errD, D_x, D_G_z1
 
         def generator_step(self):
-                noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, device=device)
-                fake = self.netG(noise)
+               
+                gen_input = torch.randn(self.batchSize, opt.latent_dim+opt.code_dim, 1, 1, device=device)
+                fake = self.netG(gen_input)
                 label = torch.full((self.batchSize,), real_label, device=device)
                 self.netG.zero_grad()
                 label.fill_(real_label)  # fake labels are real for generator cost                                                                                                                   
-                output = self.netD(fake)
+                if opt.code_dim > 0:
+                        output, _ = self.netD(fake)
+                else:
+                        output = self.netD(fake)
                 errG = self.criterion(output, label)
                 errG.backward()
                 D_G_z2 = output.mean().item()
@@ -178,17 +187,18 @@ class GAN_optimization():
                 return errG, D_G_z2
 
         def single_train_step(self, real_cpu):
+                #print('discriminator steep')
                 errD, D_x, D_G_z1 = self.discriminator_step(real_cpu)
-                for i in xrange(2):
+                for i in xrange(5):
+                        #print('generator stoop')
                         errG, D_G_z2 = self.generator_step()
                 if opt.code_dim > 0:
                         errI = self.info_step()
                         return errD, errG, errI, D_x, D_G_z1, D_G_z2
-
 		return errD, errG, D_x, D_G_z1, D_G_z2
 
 if opt.code_dim > 0:
-        ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG, optimizer_info)
+        ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG, optimizer_info=optimizer_info)
 else:
         ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
 
@@ -203,23 +213,25 @@ for i in xrange(opt.n_epochs):
 			real_cpu = local_batch['image'].to(device)
 			errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
 			lossGs.append(errG.item())
-            lossDs.append(errD.item())
+                        lossDs.append(errD.item())
 
-            lossG_vals.append(np.mean(np.array(lossGs)))
-            lossD_vals.append(np.mean(np.array(lossDs)))
+                lossG_vals.append(np.mean(np.array(lossGs)))
+                lossD_vals.append(np.mean(np.array(lossDs)))
 
 	else:
                 if opt.code_dim > 0:
-                        alphas = np.random.uniform(opt.alpha-1, opt.alpha+1, opt.batchSize)
+                        alphas = np.random.uniform(opt.alpha-0.5, opt.alpha+0.5, opt.batchSize)
                         dat, amps = gaussian_random_field(opt.batchSize, alphas, opt.imageSize)
                 else:
-                        dat, amps = gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize)
+                        alphas = np.random.uniform(opt.alpha-0.5, opt.alpha+0.5, opt.batchSize)
+                        dat, amps = gaussian_random_field(opt.batchSize, alphas, opt.imageSize)
+                        #dat, amps = gaussian_random_field(opt.batchSize, opt.alpha, opt.imageSize)
                 
                 normreal = amps.real/np.max(np.abs(amps.real))
                 real_cpu = torch.from_numpy(normreal).to(device)
 		
                 if opt.code_dim > 0:
-                        real_code = torch.from_numpy(alphas).to(device)
+                        #real_code = torch.from_numpy(alphas).to(device)
                         errD, errG, errI, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
                         lossI_vals.append(errI.item())
                 else:

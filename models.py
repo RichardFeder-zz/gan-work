@@ -63,6 +63,7 @@ class DC_Generator(nn.Module):
     def __init__(self, ngpu, nc, nz, ngf, sizes):
         super(DC_Generator, self).__init__()
         self.ngpu = ngpu
+        print('ngpu:', ngpu)
         layers = []
 
         for i, size in enumerate(sizes):
@@ -78,12 +79,12 @@ class DC_Generator(nn.Module):
         layers.append(nn.ConvTranspose2d(outc, nc, 4, 2, 1, bias=False))
         layers.append(nn.Tanh())
         
-        self.adv_layer = nn.Sequential(nn.Linear())
 
         self.main = nn.Sequential(*layers)
 
     def forward(self, input):
         if input.is_cuda and self.ngpu > 1:
+            #print('heeeeere')
             output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:
             output = self.main(input)
@@ -97,7 +98,6 @@ class DC_Discriminator(nn.Module):
         self.code_dim = code_dim
         layers = []
         for i, size in enumerate(np.flip(sizes, 0)):
-            print(i, size)
             if i==0:
                 layers.append(nn.Conv2d(nc, ndf*int(size), 4, 2, 1, bias=False))
             else:
@@ -106,8 +106,8 @@ class DC_Discriminator(nn.Module):
             outc = ndf*int(size)
             layers.append(nn.LeakyReLU(0.2, inplace=True))
 
-
         # separating last layer+activation so infogan can take feature map before sigmoid activation
+
         final_layers = []
         final_layers.append(nn.Conv2d(outc, 1, 4, 1, 0, bias=False))
         final_layers.append(nn.Sigmoid())
@@ -120,26 +120,27 @@ class DC_Discriminator(nn.Module):
 
 
         if self.code_dim > 0:
-            self.latent_layer = nn.Sequential(nn.Linear(outc, self.code_dim))
+            self.latent_layer = nn.Sequential(nn.Conv2d(outc, self.code_dim, 4, 1, 0, bias=False))
 
 
     def forward(self, input):
         if input.is_cuda and self.ngpu > 1:
+            #print('heere')
             out = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
-            output = nn.parallel.data_parallel(self.final, out, range(self.ngpu))
+            #output = nn.parallel.data_parallel(self.final, out, range(self.ngpu))
             #output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:
             out = self.main(input)
-            output = self.final(out)
+            #output = self.final(out)
             #output = self.main(input)
-
-
+        output = self.final(out)
         if self.code_dim > 0:
+            #return output.view(-1, 1).squeeze(1), output.view(-1, 1).squeeze(1)
             latent_code = self.latent_layer(out)
-            return output.view(-1, 1).squeeze(1), latent_code
+            return output.view(-1, 1).squeeze(1), latent_code.view(-1, 1).squeeze(1)
 
-
-        return output.view(-1, 1).squeeze(1)
+        else:
+            return output.view(-1, 1).squeeze(1)
 
 class VAE_connected(nn.Module):
     def __init__(self):

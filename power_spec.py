@@ -66,7 +66,7 @@ def gaussian_random_field(n_samples, alpha, size = 100):
     
     noise = np.fft.fft2(np.random.normal(size = (n_samples, size, size)))
 
-    if len(alpha)==1:
+    if type(alpha)==float:
         amplitude = np.zeros((size,size))
         for i, kx in enumerate(fftIndgen(size)):
             for j, ky in enumerate(fftIndgen(size)):
@@ -74,10 +74,10 @@ def gaussian_random_field(n_samples, alpha, size = 100):
 
     else:
         amplitude = np.zeros((len(alpha), size, size))
-        for s in xrange(len(alpha)):
-            for i, kx in enumerate(fftIndgen(size)):
-                for j, ky in enumerate(fftIndgen(size)):            
-                    amplitude[s, i, j] = Pk2(kx, ky, alpha[s])
+        #for s in xrange(len(alpha)):
+        for i, kx in enumerate(fftIndgen(size)):
+            for j, ky in enumerate(fftIndgen(size)):            
+                amplitude[:, i, j] = Pk2(kx, ky, alpha)
 
     grfs = np.fft.ifft2(noise * amplitude, axes=(-2,-1))
 
