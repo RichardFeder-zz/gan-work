@@ -19,14 +19,7 @@ from torchvision import transforms, utils
 
 class GRFDataset(data.Dataset):
     def __init__(self, root_dir, nsamp=10, transform=None):
-        """                                                                                                                                                                                         
-        Args:                                                                                                                                                                                       
-            root_dir (string): Directory with all the images.                                                                                                                                       
-            transform (callable, optional): Optional transform to be applied                                                                                                                        
-                on a sample.                                                                                                                                                                                                                                                                                                                                                                           
-            nsamp (int):                                                                                                                                                                            
-        """
-
+       
         self.root_dir = root_dir
         self.transform = transform
         self.ngrfs = nsamp
@@ -85,7 +78,6 @@ def gaussian_random_field(n_samples, alpha, size = 100):
     return grfs.real, np.array(noise*amplitude)
    
 def power2DMean(k, power_interpolation, size, N=256):
-    """ Mean 2D Power works! """
     theta = np.linspace(-np.pi, np.pi, N, False)
     power = np.empty_like(k)
     for i in xrange(k.size):

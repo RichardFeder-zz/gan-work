@@ -29,6 +29,12 @@ Device = 'cpu'
 mu_range = np.linspace(-1.0, 1.0, 8)
 sig_range = np.linspace(0.1, 2.0, 8)
 
+def setup_result_directories():
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+    new_dir, frame_dir = create_directories(timestr)
+    fake_dir = frame_dir+'/fake'
+    os.makedirs(fake_dir)
+    return timestr, newdir, frame_dir, fake_dir
 
 def create_directories(time_string):
     new_dir = base_dir+time_string
