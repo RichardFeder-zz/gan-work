@@ -326,3 +326,36 @@ def blockwise_average_3D(A,S):
 
     m,n,r = np.array(A.shape)//S
     return A.reshape(m,S[0],n,S[1],r,S[2]).mean((1,3,5))
+
+
+def partition_cube(sim, length, cubedim, sim_boxes, zlist=None, z=None, loglike_a=4):
+    for x in xrange(int(length/cubedim)):
+        for y in xrange(int(length/cubedim)):
+            for z in xrange(int(length/cubedim)):
+                sim_boxes.append(loglike_transform(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, z*cubedim:(z+1)*cubedim], a=loglike_a))
+                if zlist is not None:
+                    zlist.append(z)
+    if zlist is not None:
+        return sim_boxes, zlist
+    else:
+        return sim_boxes
+
+def load_in_simulations(opt):
+    nsims = opt.nsims
+    sim_boxes = []
+    length = 512
+    if opt.redshift_code:
+        zlist = [] # array storing the redshift slice of a given volume in sim_boxes                                                                                              
+        for i in xrange(nsims):
+            with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
+                for idx in opt.redshift_idxs:
+                    sim = ofile["%3.3d"%(idx)][()].copy()
+                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, zlist=zlist, z=redshift_bins[idx])
+        return np.array(sim_boxes), np.array(zlist)
+    else:
+        with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
+            for i in xrange(nsims):
+                sim = ofile['seed'+str(i+1)][()].copy()
+                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes)
+
+        return np.array(sim_boxes)
