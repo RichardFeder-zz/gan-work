@@ -1,4 +1,7 @@
 import os
+import time
+import argparse
+import h5py
 import numpy as np
 import cPickle as pickle
 from torch.nn.functional import binary_cross_entropy_with_logits as bce
@@ -34,7 +37,7 @@ def setup_result_directories():
     new_dir, frame_dir = create_directories(timestr)
     fake_dir = frame_dir+'/fake'
     os.makedirs(fake_dir)
-    return timestr, newdir, frame_dir, fake_dir
+    return timestr, new_dir, frame_dir, fake_dir
 
 def create_directories(time_string):
     new_dir = base_dir+time_string
@@ -350,7 +353,7 @@ def load_in_simulations(opt):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                 for idx in opt.redshift_idxs:
                     sim = ofile["%3.3d"%(idx)][()].copy()
-                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, zlist=zlist, z=redshift_bins[idx])
+                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, zlist=zlist, z=opt.redshift_bins[idx])
         return np.array(sim_boxes), np.array(zlist)
     else:
         with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
@@ -359,3 +362,41 @@ def load_in_simulations(opt):
                 sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes)
 
         return np.array(sim_boxes)
+
+
+def get_parsed_arguments(dattype):
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--trainSize', type=int, default=0, help='size of training dataset, if 0 then use unlimited samples')
+    parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
+    parser.add_argument('--latent_dim', type=int, default=200, help='size of the latent z vector')
+    parser.add_argument('--ngf', type=int, default=32)
+    parser.add_argument('--ndf', type=int, default=32)
+    parser.add_argument('--n_epochs', type=int, default=10, help='number of epochs to train for')
+    parser.add_argument('--lr_g', type=float, default=0.0025, help='learning rate of generator, default=0.0025')
+    parser.add_argument('--lr_d', type=float, default=0.00001, help='learning rate of discriminator, default=0.00002')
+    parser.add_argument('--b1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
+    parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of first order momentum of gradient')
+    parser.add_argument('--cuda', type=bool, default=True, help='enables cuda')
+    parser.add_argument('--ngpu', type=int, default=4, help='number of GPUs to use')
+    parser.add_argument('--netG', default='', help="path to netG (to continue training)")
+    parser.add_argument('--netD', default='', help="path to netD (to continue training)")
+    parser.add_argument('--manualSeed', type=int, help='manual seed')
+
+    if dattype=='nbody':
+        parser.add_argument('--base_path', default='/work/06147/pberger/maverick2/gadget_runs/cosmo1/')
+        parser.add_argument('--file_name', default='n512_512Mpc_cosmo1_z0_gridpart.h5')
+        parser.add_argument('--datadim', type=int, default=3, help='2 to train on slices, 3 to train on volumes') # not currently functional for 2d   
+        parser.add_argument('--loglike_a', type=float, default=4., help='scaling parameter in loglike transformation of data')
+        parser.add_argument('--redshift_idxs', type=list, default=None, help='choose which redshifts to sample from by their index. if None then all redshifts will be sampled. this is useful if you want to exclude certain redshifts and then interpolate a trained model to reproduce them')
+        parser.add_argument('--redshift_code', type=bool, default=False, help='determines whether redshift conditional information used for cGAN')
+        parser.add_argument('--n_genstep', type=int, default=1, help='number of generator steps for each discriminator step')
+        parser.add_argument('--nsims', type=int, default=32, help='number of simulation boxes to get samples from')
+        parser.add_argument('--cubedim', type=int, default=128, help='the height / width of the input image to network')
+
+    elif dattype=='grf':
+        parser.add_argument('--alpha', type=float, default=-2.0, help='Slope of power law for gaussian random field')
+
+    parser.add_argument('--info', type=bool, default=False, help='determines whether infoGAN is employed')
+    return parser.parse_known_args()[0]
+
