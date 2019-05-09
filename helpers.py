@@ -331,14 +331,18 @@ def blockwise_average_3D(A,S):
     return A.reshape(m,S[0],n,S[1],r,S[2]).mean((1,3,5))
 
 
-def partition_cube(sim, length, cubedim, sim_boxes, zlist=None, z=None, loglike_a=4):
+def partition_cube(sim, length, cubedim, sim_boxes, zlist=None, z=None, loglike_a=None):
     for x in xrange(int(length/cubedim)):
         for y in xrange(int(length/cubedim)):
-            for z in xrange(int(length/cubedim)):
-                sim_boxes.append(loglike_transform(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, z*cubedim:(z+1)*cubedim], a=loglike_a))
+            for r in xrange(int(length/cubedim)):
+                if loglike_a is None:
+                    sim_boxes.append(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim])
+                else:
+                    sim_boxes.append(loglike_transform(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], a=loglike_a))
                 if zlist is not None:
                     zlist.append(z)
     if zlist is not None:
+        #print('zlist:', zlist)
         return sim_boxes, zlist
     else:
         return sim_boxes
@@ -353,7 +357,7 @@ def load_in_simulations(opt):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                 for idx in opt.redshift_idxs:
                     sim = ofile["%3.3d"%(idx)][()].copy()
-                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, zlist=zlist, z=opt.redshift_bins[idx])
+                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, zlist=zlist, z=opt.redshift_bins[idx], loglike_a=opt.loglike_a)
         return np.array(sim_boxes), np.array(zlist)
     else:
         with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:

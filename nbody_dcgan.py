@@ -172,7 +172,7 @@ else:
     sim_boxes = load_in_simulations(opt)
         
 print(len(sim_boxes), 'loaded into memory..')
-
+print('min/max values:', np.min(sim_boxes[0]), np.max(sim_boxes[0]))
 
 for i in xrange(opt.n_epochs):
     lossGs, lossDs = [], []
