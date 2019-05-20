@@ -22,7 +22,6 @@ opt = get_parsed_arguments('nbody')
 
 richard_workdir = '/work/06224/rfederst/maverick2/results/'
 
-#opt = parser.parse_known_args()[0]
 if not torch.cuda.is_available():
     opt.cuda=False
     
@@ -35,19 +34,29 @@ n_cond_params = 0
 #sizes = make_size_array(opt.cubedim, 4)
 sizes = np.array([8,4,2,1])
 
-redshift_bins = np.array([10., 7.5, 5., 3., 2., 1.5, 1., 0.5, 0.25, 0.]) 
-redshift_strings = np.array(["%3.3d"%(i) for i in xrange(len(redshift_bins))])
-if opt.redshift_idxs is None:
-    opt.redshift_idxs = np.array([i for i in xrange(len(redshift_bins))])
-    opt.redshift_bins = redshift_bins[opt.redshift_idxs]
-    output1shape = (opt.cubedim/2, opt.cubedim/2, opt.cubedim/2) # for z feature maps in discriminator
+redshift_bins = np.array([1., 0.5, 0.25, 0.])
+redshift_strings = np.array(['006', '007', '008', '009'])
+
+#redshift_bins = np.array([5., 3., 1., 0.5, 0.])
+#redshift_strings = np.array(['002', '003', '006', '007', '009'])
+opt.redshift_bins=redshift_bins
+opt.redshift_idxs = np.array([6, 7, 8, 9])
+#opt.redshift_idxs = np.array([2, 3, 6, 7, 9])
+#redshift_bins = np.array([10., 7.5, 5., 3., 2., 1.5, 1., 0.5, 0.25, 0.]) 
+#redshift_strings = np.array(["%3.3d"%(i) for i in xrange(len(redshift_bins))])
+#if opt.redshift_idxs is None:
+#    opt.redshift_idxs = np.array([i for i in xrange(len(redshift_bins))])
+#    opt.redshift_bins = redshift_bins[opt.redshift_idxs]
+
 if opt.redshift_code:
     n_cond_params = 1
+    output1shape = (opt.cubedim/2, opt.cubedim/2, opt.cubedim/2) # for z feature maps in discriminator  
 
-print('Redshifts:', redshift_bins)
-print('Redshift strings:', redshift_strings)
+    print('Redshifts:', redshift_bins)
+    print('Redshift strings:', redshift_strings)
 
-
+if opt.wgan:
+    print('Using Wasserstein GAN')
 timestr, new_dir, frame_dir, fake_dir = setup_result_directories()
 save_params(new_dir, opt)
 
@@ -99,9 +108,10 @@ class GAN_optimization():
     def discriminator_step(self, real_cpu, zs=None):
         self.netD.zero_grad()
 
+        # train with real
+
         label = torch.full((self.batchSize,), real_label, device=device)
-        # reshape needed for images with one channel                                                                                                                          
-        real_cpu = torch.unsqueeze(real_cpu, 1).float()
+        real_cpu = torch.unsqueeze(real_cpu, 1).float() # reshape for 1 channel images
         if zs is not None:
             output = self.netD(real_cpu, zfeatures=make_feature_maps(zs, output1shape, device))
         else:
@@ -111,7 +121,6 @@ class GAN_optimization():
         D_x = output.mean().item()
 
         # train with fake                                                                                                                                               
-
         noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, 1, device=device)
         if zs is not None:
             fake_zs = np.random.choice(redshift_bins, opt.batchSize)
@@ -126,14 +135,30 @@ class GAN_optimization():
         
         errD_fake = self.criterion(output, label)
         errD_fake.backward()
+        
+        # train with gradient penalty
+        if opt.wgan:
+            if zs is not None:
+                gradient_penalty = calc_gradient_penalty(self.netD, opt, real_cpu, fake, realz_feat=make_feature_maps(zs, output1shape, device), fakez_feat = make_feature_maps(fake_zs, output1shape, device))
+            else:
+                gradient_penalty = calc_gradient_penalty(self.netD, opt, real_cpu, fake) 
+            print('Gradient penalty:', gradient_penalty.item())
+            gradient_penalty.backward()
+
+        dnorm = compute_gradient_norm(self.netD)
         D_G_z1 = output.mean().item()
 
-        errD = errD_real + errD_fake
-        #print('D_G_z1:', D_G_z1)
-        if D_G_z1 > 0.2:
-            self.optimizerD.step()
 
-        return errD, D_x, D_G_z1
+        if opt.wgan:
+            D_cost = errD_fake - errD_real + gradient_penalty
+            errD = errD_real - errD_fake
+            self.optimizerD.step()
+        else:
+            errD = errD_real + errD_fake
+            if D_G_z1 > 0.2: # might not need this for wgan
+                self.optimizerD.step()
+
+        return errD, D_x, D_G_z1, dnorm
 
     def generator_step(self, zs=None):
         noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, 1, device=device)
@@ -153,15 +178,16 @@ class GAN_optimization():
 
         errG = self.criterion(output, label)
         errG.backward()
+        gnorm = compute_gradient_norm(self.netG)
         D_G_z2 = output.mean().item()
         self.optimizerG.step()
-        return errG, D_G_z2
+        return errG, D_G_z2, gnorm
 
     def single_train_step(self, real_cpu, zs=None):
-        errD, D_x, D_G_z1 = self.discriminator_step(real_cpu, zs=zs)
+        errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, zs=zs)
         for i in xrange(opt.n_genstep):
-                errG, D_G_z2 = self.generator_step(zs=zs)
-        return errD, errG, D_x, D_G_z1, D_G_z2
+                errG, D_G_z2, gnorm = self.generator_step(zs=zs)
+        return errD, errG, D_x, D_G_z1, D_G_z2, gnorm, dnorm
 
 ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
 
@@ -172,10 +198,12 @@ else:
     sim_boxes = load_in_simulations(opt)
         
 print(len(sim_boxes), 'loaded into memory..')
-print('min/max values:', np.min(sim_boxes[0]), np.max(sim_boxes[0]))
-
+print('min/max values:', np.min(sim_boxes), np.max(sim_boxes))
+gnorms, dnorms = [], []
+lossGs, lossDs = [], []
 for i in xrange(opt.n_epochs):
-    lossGs, lossDs = [], []
+    #lossGs, lossDs = [], []
+    #gnorms, dnorms = [], []
     sim_idxs = np.arange(len(sim_boxes))
     while len(sim_idxs)>0:
         choice = np.random.choice(sim_idxs, opt.batchSize, replace=False)
@@ -184,24 +212,27 @@ for i in xrange(opt.n_epochs):
         dat = []
         for c in choice:
             nrots = np.random.choice([0, 1, 2, 3], 3)
-            # random rotation wrt each plane
-            dat.append(np.rot90(np.rot90(np.rot90(sim_boxes[c], nrots[0], axes=(0,1)), nrots[1], axes=(1,2)), nrots[2], axes=(0,2)))
+            # random rotation wrt each plane + random flip
+            if np.random.uniform() > 0.5:
+                dat.append(np.fliplr(np.rot90(np.rot90(np.rot90(sim_boxes[c], nrots[0], axes=(0,1)), nrots[1], axes=(1,2)), nrots[2], axes=(0,2))))
+            else:
+                dat.append(np.rot90(np.rot90(np.rot90(sim_boxes[c], nrots[0], axes=(0,1)), nrots[1], axes=(1,2)), nrots[2], axes=(0,2)))
 
         sim_idxs = np.array([x for x in sim_idxs if x not in choice])
         real_cpu = torch.from_numpy(np.array(dat)).to(device)
         if opt.redshift_code:
             zs = zlist[choice]
-            output1shape = (opt.cubedim/2, opt.cubedim/2, opt.cubedim/2)
-
-            errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu, zs=zs)
+            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs)
         else:
-            errD, errG, D_x, D_G_z1, D_G_z2 = ganopt.single_train_step(real_cpu)
+            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu)
         
-        print('errG:', errG.item(),'errD:', errD.item(), 'D_G_z1:', D_G_z1)
+        print('errG:', errG.item(),'errD:', errD.item(), 'D_G_z1:', D_G_z1, 'Gnorm:', gn, 'Dnorm:', dn)
         
         assert errG.item() != 0.0 # these make sure we're not falling into mode collapse or an outperforming discriminator
         assert errD.item() != 0.0
         
+        gnorms.append(gn)
+        dnorms.append(dn)
         lossGs.append(errG.item())
         lossDs.append(errD.item())
 
@@ -213,6 +244,10 @@ for i in xrange(opt.n_epochs):
     save_nn(ganopt.netG, new_dir+'/netG_epoch_'+str(i))
     save_nn(ganopt.netD, new_dir+'/netD_epoch_'+str(i))
     #fake = ganopt.netG(fixed_noise)
+    np.savetxt(new_dir+'/generator_grad_norm_epoch_'+str(i)+'.txt',np.array(gnorms))
+    np.savetxt(new_dir+'/discriminator_grad_norm_epoch_'+str(i)+'.txt',np.array(dnorms)) 
+    np.savetxt(new_dir+'/generator_loss_epoch_'+str(i)+'.txt',np.array(lossGs))
+    np.savetxt(new_dir+'/discriminator_loss_epoch_'+str(i)+'.txt',np.array(lossDs))
 
     #arr = torch.squeeze(fake).detach().cpu().numpy()[0,:,:,0]
     try:
@@ -232,4 +267,9 @@ for i in xrange(opt.n_epochs):
 save_nn(ganopt.netG, new_dir+'/netG')
 save_nn(ganopt.netD, new_dir+'/netD')
 
-plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)
+
+np.savetxt(new_dir+'/generator_grad_norm.txt', np.array(gnorms))
+np.savetxt(new_dir+'/discriminator_grad_norm.txt', np.array(dnorms))
+
+plot_loss_iterations(np.array(lossDs), np.array(lossGs), new_dir)
+#plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)

@@ -168,9 +168,13 @@ class DC_Generator3D(nn.Module):
             outc = ngf*int(size)
             layers.append(nn.BatchNorm3d(outc))
             layers.append(nn.ReLU(True))
+
+        #layers.append(nn.ConvTranspose3d(outc, outc, 3, stride=1, padding=1, bias=False)) # extra layer
+        #layers.append(nn.BatchNorm3d(outc))
+        #layers.append(nn.ReLU(True))
+
         layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
         #layers.append(nn.ConvTranspose3d(outc, nc, 2, stride=2, padding=0, bias=False))
-
         if endact=='tanh': 
             layers.append(nn.Tanh())
         elif endact=='softplus':
@@ -195,6 +199,7 @@ class DC_Discriminator3D(nn.Module):
 
             if i==0:
                 first_layer.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
+                #first_layer.append(nn.Conv3d(ndf*int(size), ndf*int(size), 3, stride=1, padding=1, bias=False)) # extra layer
                 #layers.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
                 first_layer.append(nn.LeakyReLU(0.2, inplace=True))
             # if there are conditional parameters this will accommoate an extra feature map 
@@ -219,6 +224,7 @@ class DC_Discriminator3D(nn.Module):
     def forward(self, input, zfeatures=None):
         if input.is_cuda and self.ngpu > 1:
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
+            #print(output1.shape)
             if zfeatures is not None:
                 #print('zfeatures:', zfeatures)
                 output1 = torch.cat((output1, zfeatures), 1)
