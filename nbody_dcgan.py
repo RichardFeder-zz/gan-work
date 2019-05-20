@@ -34,18 +34,21 @@ n_cond_params = 0
 #sizes = make_size_array(opt.cubedim, 4)
 sizes = np.array([8,4,2,1])
 
-redshift_bins = np.array([1., 0.5, 0.25, 0.])
-redshift_strings = np.array(['006', '007', '008', '009'])
+#redshift_bins = np.array([1., 0.5, 0.25, 0.])
+#redshift_strings = np.array(['006', '007', '008', '009'])
+redshift_bins = np.array([3., 1.5, 0.5, 0.])
+redshift_strings = np.array(['003', '005','007', '009'])
+
 
 #redshift_bins = np.array([5., 3., 1., 0.5, 0.])
 #redshift_strings = np.array(['002', '003', '006', '007', '009'])
 opt.redshift_bins=redshift_bins
-opt.redshift_idxs = np.array([6, 7, 8, 9])
-#opt.redshift_idxs = np.array([2, 3, 6, 7, 9])
+
+opt.redshift_idxs = np.array([int(r) for r in redshift_strings])
+
 #redshift_bins = np.array([10., 7.5, 5., 3., 2., 1.5, 1., 0.5, 0.25, 0.]) 
 #redshift_strings = np.array(["%3.3d"%(i) for i in xrange(len(redshift_bins))])
 #if opt.redshift_idxs is None:
-#    opt.redshift_idxs = np.array([i for i in xrange(len(redshift_bins))])
 #    opt.redshift_bins = redshift_bins[opt.redshift_idxs]
 
 if opt.redshift_code:
@@ -54,6 +57,7 @@ if opt.redshift_code:
 
     print('Redshifts:', redshift_bins)
     print('Redshift strings:', redshift_strings)
+    print('Redshift idxs:', opt.redshift_idxs)
 
 if opt.wgan:
     print('Using Wasserstein GAN')
