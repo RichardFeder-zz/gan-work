@@ -1,0 +1,25 @@
+target_var : 'density'
+loss : 'mean_squared_error'
+
+save_model : 'foo.keras'
+save_history : 'foo.h5'
+
+paths_to_density :
+    'z0' : '/foo/'
+    'z1' : '/foo/'
+
+train_config :
+    train_batch_size : 8
+    val_batch_size   : 8
+    ngpus            : 1
+    image_shape      : (64, 64, 64)
+    nepochs          : 13
+
+net_config :
+    nlevels       : 3
+    base_features : 32
+
+optimizer_params :
+    beta_1 : 0.99
+    beta_2 : 0.999
+    lr     : 1e-5
