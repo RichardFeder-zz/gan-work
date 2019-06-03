@@ -1,25 +1,35 @@
-target_var : 'density'
-loss : 'mean_squared_error'
+save_model : '/work/06147/pberger/maverick2/saved_models/gen_resnet3d_001.keras'
+save_history : '/work/06147/pberger/maverick2/saved_models/gen_resnet3d_001.history5'
 
-save_model : 'foo.keras'
-save_history : 'foo.h5'
-
-paths_to_density :
-    'z0' : '/foo/'
-    'z1' : '/foo/'
+paths_to_data :
+    'z0' : "/work/06147/pberger/maverick2/gadget_runs/cosmo1/n512_512Mpc_cosmo1_z0_gridpart.h5"
 
 train_config :
     train_batch_size : 8
-    val_batch_size   : 8
-    ngpus            : 1
     image_shape      : (64, 64, 64)
     nepochs          : 13
+    latent_dim       : 100
 
 net_config :
-    nlevels       : 3
-    base_features : 32
+    generator :
+        module : kgan.net.generator_resnet3d
+        args : 
+            nlevels            : 3
+            base_features      : 32
+            nconvl             : 1
+            conv_kernel_size   : (5, 5, 5)
+            updown_kernel_size : (2, 2, 2)
+            updown_method      : 'conv'
+    critic : 
+        module : kgan.net.critic_simple
+        args :
+            base_features : 32
 
-optimizer_params :
-    beta_1 : 0.99
-    beta_2 : 0.999
-    lr     : 1e-5
+optimizer_config :
+    name   : Adam
+    args   : 
+        beta_1 : 0.0
+        beta_2 : 0.5
+        lr     : 2e-4
+        decay  : 1e-5
+

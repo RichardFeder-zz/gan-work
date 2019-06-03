@@ -1,6 +1,8 @@
 """
+This is a script trains a model or
+set of models based on a config yaml
+file.
 
-Useful for general NN training.
 
 """
 
@@ -11,12 +13,17 @@ import sys
 import yaml
 import ast
 import h5py
-import pandas as pd
 import math
 
-from keras.optimizers import Adam
-from sklearn.utils import shuffle
-from sklearn.model_selection import train_test_split
+from importlib import import_module
+from functools import partial
+
+from kgan.tools.delta import *
+from kgan.net.gp_loss import *
+
+from keras import optimizers
+import keras.layers as kl
+import keras.models as km
 
 def load_config(yaml_file):
 
@@ -25,63 +32,6 @@ def load_config(yaml_file):
         
     return yaml.load(file_str)
 
-def get_xy_data(fmatrix, ypdict, y_key, **kwargs):
-        
-    x_data = []
-    y_data = []
-    
-    for index, row in fmatrix.iterrows():
-        print(str(row['Patient_Dir']))
-        for year_str in ypdict.keys():
-            if year_str in str(row['Date']):
-                path_to_videos = ypdict[year_str]                
-        patient_folder_name = str(row['Patient_Dir'])
-#         #Just a check
-#         os.listdir(path_to_videos + patient_folder_name + '/' + str(row['Folder']))
-                
-        full_path = path_to_videos + patient_folder_name + '/' + str(row['Folder'])
-        
-        vid = vtools.load_video(full_path, **kwargs)
-        x_data.append(vid.reshape(vid.shape + (1,)))
-        
-        y_data.append(np.array(row[y_key]))
-        
-    print(np.array(x_data).shape)
-    print(np.array(y_data).shape)
-        
-    return x_data, y_data
-
-def batch_to(x, y, batch_size):
-    
-    x = np.array(x)
-    y = np.array(y)
-    
-    x_batch = []
-    y_batch = []
-    
-    up2 = 0
-    for batch in np.array_split(x, math.ceil(len(x)/batch_size)):
-        x_batch.append(batch)
-        y_batch.append(y[up2:up2+len(batch)])
-        up2 += len(batch)
-        
-    return x_batch, y_batch
-
-def shuffle_generator(x, y, batch_size, steps_per_epoch, noise=None):
-    bi = 0
-    while True:
-        if bi in [0, steps_per_epoch]:
-            bi = 0
-            x, y = shuffle(x, y)
-            x_batch, y_batch = batch_to(x, y, batch_size)
-            
-        if noise is not None:
-            yield(x_batch[bi], y_batch[bi] + np.random.normal(0, noise, 
-                                                              size=(len(y_batch[bi]),) ))
-        else:
-            yield(x_batch[bi], y_batch[bi])
-        
-        bi += 1
 
 if __name__ == '__main__':
 
@@ -89,89 +39,186 @@ if __name__ == '__main__':
     conf_file = sys.argv[1]
     config = load_config(conf_file)
     
-    # Get locations of train and test set
-    fmatrix = pd.read_pickle(config['feature_matrix'])
-    fmatrix = fmatrix[0:100]
-
-    patients_training_set, patients_test_set = train_test_split(np.unique(fmatrix['Patient_Dir']), test_size=0.2)
-    train = fmatrix.loc[fmatrix['Patient_Dir'].isin(patients_training_set)]
-    test = fmatrix.loc[fmatrix['Patient_Dir'].isin(patients_test_set)]
-    
-    ypdict = config['paths_to_videos']
-    ykey = config['target_var']
+    # Load the data
+    data_dict = config['paths_to_data']
+    delta = []
+    for dkey in data_dict.keys():
+        with h5py.File(data_dict[dkey], 'r') as dfile:
+            for dk in list(dfile.keys()):
+                delta_i = squash(dfile[dk][:])
+                delta_i = np.array(split3d(delta_i, 8))
+                delta.extend(delta_i)
+    delta = np.array(delta)
+    print("Data has shape: %s" % str(delta.shape))
 
     # Get the training params
     train_batch_size = int(config['train_config']['train_batch_size'])
-    val_batch_size = int(config['train_config']['val_batch_size'])
-    ngpus = int(config['train_config']['ngpus'])
     image_shape = ast.literal_eval(config['train_config']['image_shape'])
-    frames_per_vid = int(config['train_config']['frames_per_vid'])
+    latent_dim = int(config['train_config']['latent_dim'])
     nepochs = int(config['train_config']['nepochs'])
+    ############
+    # HARDCODE #
+    ############
+    n_critic = 5
+    n_samps = delta.shape[0]
+
+    # Build the models
+    generator_module = import_module(config['net_config']['generator']['module'])
+    critic_module = import_module(config['net_config']['critic']['module'])
+
+    generator_args = {}
+    for key, val in config['net_config']['generator']['args'].iteritems():
+        try:
+            generator_args[key] = ast.literal_eval(val)
+        except ValueError:
+            generator_args[key] = val
+    critic_args = {}
+    for key, val in config['net_config']['critic']['args'].iteritems():
+        try:
+            critic_args[key] = ast.literal_eval(val)
+        except ValueError:
+            critic_args[key] = val
+
+    generator_args['base_features'] = generator_args['base_features'] * 2**generator_args['nlevels']
+    generator = generator_module.get_generator(input_shape=(latent_dim,), image_shape=image_shape,
+                                               **generator_args)
+    critic = critic_module.get_critic(input_shape=image_shape+(1,), **critic_args)
+
+    # Build the optimizer
+    op_args = {}
+    for key, val in config['optimizer_config']['args'].iteritems():
+        try:
+            op_args[key] = ast.literal_eval(val)
+        except ValueError:
+            op_args[key] = val
+
+    optimizer = getattr(optimizers, config['optimizer_config']['name'])(**op_args)
+
+    #-------------------------------
+    # Construct Computational Graph
+    #       for the Critic
+    #-------------------------------
+
+    # Freeze generator's layers while training critic
+    generator.trainable = False
+
+    # Image input (real sample)
+    real_img = kl.Input(shape=image_shape+(1,))
+
+    # Noise input
+    z_disc = kl.Input(shape=(latent_dim,))
+    # Generate image based of noise (fake sample)
+    fake_img = generator(z_disc)
+
+    # Discriminator determines validity of the real and fake images
+    fake = critic(fake_img)
+    valid = critic(real_img)
+
+    # Construct weighted average between real and fake images
+    interpolated_img = RandomWeightedAverage()([real_img, fake_img])
+    # Determine validity of weighted sample
+    validity_interpolated = critic(interpolated_img)
+
+    # Use Python partial to provide loss function with additional
+    # 'averaged_samples' argument
+    partial_gp_loss = partial(gradient_penalty_loss,
+                              averaged_samples=interpolated_img)
+    partial_gp_loss.__name__ = 'gradient_penalty' # Keras requires function names
+
+    critic_model = km.Model(inputs=[real_img, z_disc],
+                            outputs=[valid, fake, validity_interpolated])
+    critic_model.compile(loss=[wasserstein_loss,
+                               wasserstein_loss,
+                               partial_gp_loss],
+                         optimizer=optimizer,
+                         loss_weights=[1, 1, 10])
+    #-------------------------------
+    # Construct Computational Graph
+    #         for Generator
+    #-------------------------------
+
+    # For the generator we freeze the critic's layers
+    critic.trainable = False
+    generator.trainable = True
+
+    # Sampled noise for input to generator
+    z_gen = kl.Input(shape=(latent_dim,))
+    # Generate images based of noise
+    img = generator(z_gen)
+    # Discriminator determines validity
+    valid = critic(img)
+    # Defines generator model
+    generator_model = km.Model(z_gen, valid)
+    generator_model.compile(loss=wasserstein_loss, optimizer=optimizer)
     
-    # Load the videos, swap the image_dim for cv2.resize
-    print('training set')
-    x_train, y_train = get_xy_data(train, ypdict, ykey,
-                                   image_dim=(image_shape[1], image_shape[0]), 
-                                   img_type='jpg',
-                                   normalize='video',
-                                   downsample=True,
-                                   frames_per_vid=frames_per_vid)
-    print('test set')
-    x_test, y_test = get_xy_data(test, ypdict, ykey,
-                                 image_dim=(image_shape[1], image_shape[0]), 
-                                 img_type='jpg',
-                                 normalize='video',
-                                 downsample=True,
-                                 frames_per_vid=frames_per_vid)
+    #-------------------------------
+    #        Ok now train
+    #-------------------------------
 
-    train_steps_per_epoch = int(np.ceil(len(x_train)/(train_batch_size*ngpus)))
-    val_steps_per_epoch = int(np.ceil(len(x_test)/(val_batch_size*ngpus)))
+    # Adversarial ground truths
+    batch_size = train_batch_size
+    valid = -np.ones((batch_size, 1))
+    fake =  np.ones((batch_size, 1))
+    dummy = np.zeros((batch_size, 1)) # Dummy gt for gradient penalty
 
-    tsg = shuffle_generator(x_train, y_train, 
-                            train_batch_size*ngpus, train_steps_per_epoch, 
-                            noise=None)
-    vsg = shuffle_generator(x_test, y_test, 
-                            val_batch_size*ngpus, val_steps_per_epoch)
+    d_hist = []
+    g_hist = []
+    for epoch in range(nepochs):
+    
+        choice = np.arange(n_samps)
+        np.random.shuffle(choice)
+    
+        niter = len(choice)//batch_size//n_critic
+    
+        for it in range(niter):
+            for ic in range(n_critic):
 
-    # Get the NN config
-    nlevels = int(config['net_config']['nlevels'])
-    base_features = int(config['net_config']['base_features'])
+                # ---------------------
+                #  Train Discriminator
+                # ---------------------
 
-    # Build the model
-    model = get_model(input_shape=(None,) + image_shape + (1,), 
-                      nlevels=nlevels, base_features=base_features, nclasses=3)
+                # Get some true images
+                s0 = it*batch_size*n_critic + ic*batch_size
+                s1 = it*batch_size*n_critic + (ic+1)*batch_size
+                imgs = delta[choice[s0:s1]]
+                imgs = imgs.reshape((batch_size,) + image_shape + (1,))
+            
+                #Random reflections
+                if np.random.uniform() >= 0.5:
+                    imgs = imgs[:, ::-1]
+                if np.random.uniform() >= 0.5:
+                    imgs = imgs[:, :, ::-1]
+                if np.random.uniform() >= 0.5:
+                    imgs = imgs[:, :, :, ::-1]
 
-    #Compile the model
-    op_params = {}
-    for keyi in config['optimizer_params']:
-        op_params[keyi] = float(config['optimizer_params'][keyi])
-    optimizer = Adam(**op_params)
+                # Sample generator input
+                noise = np.random.normal(0, 1, (batch_size, latent_dim))
+                # Train the critic
+                d_loss = critic_model.train_on_batch([imgs, noise],
+                                                     [valid, fake, dummy])
 
-    if ngpus == 1:
-        model.compile(loss='mean_squared_error', optimizer=optimizer)
+            # ---------------------
+            #  Train Generator
+            # ---------------------
 
-        history = model.fit_generator(tsg, validation_data = vsg,
-                                      steps_per_epoch=train_steps_per_epoch, 
-                                      validation_steps=val_steps_per_epoch,
-                                      epochs=nepochs, verbose=True)
+            g_loss = generator_model.train_on_batch(noise, valid)
+
+            d_hist.append(d_loss[0])
+            g_hist.append(g_loss)
+
+            print ("%d: %i/%i: [D loss: %f] [G loss: %f]" % 
+                   (epoch, it, niter, d_loss[0], g_loss))
+
+        #test_img = generator.predict(np.random.normal(0, 1, (1, latent_dim))).reshape(img_shape)
+        #plt.imshow(test_img[32, :, :, 0])
+        #colorbar()
+        #display.display(gcf())
         
-        # Save the model
-        model.save(config['save_model'])
-        
-    else:
-        from keras.utils import multi_gpu_model
-        parallel_model = multi_gpu_model(model, gpus=ngpus)
-
-        parallel_model.compile(loss=config['loss'], optimizer=optimizer)
-
-        history = parallel_model.fit_generator(tsg, validation_data = vsg,
-                                               steps_per_epoch=train_steps_per_epoch, 
-                                               validation_steps=val_steps_per_epoch,
-                                               epochs=nepochs, verbose=True)
-
-        parallel_model.save(config['save_model'])
+        if (epoch in [5, 10, 15]) or (epoch > 15):
+            # Checkpoint the generator
+            generator_model.save(config['save_model'] + '-%03d' % epoch)
 
     # Save the history
     with h5py.File(config['save_history']) as hfile:
-        for keyi in history.history:
-            hfile.create_dataset(keyi, data=history.history[keyi])
+        hfile.create_dataset('g_loss', g_loss)
+        hfile.create_dataset('d_loss', d_loss)
