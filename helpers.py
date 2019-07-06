@@ -10,7 +10,6 @@ import sys
 from astropy.io import fits
 import torchvision.transforms.functional as TF
 from torch.autograd import Variable, grad
-#import torch.autograd as autograd
 import torch.nn as nn
 import torch
 from torch.utils import data
@@ -337,16 +336,14 @@ def loglike_transform_2(x, k=5.):
 def inverse_loglike_transform_2(s, k=5.):
     return 10**(float(k)*s)-1
 
-
 def blockwise_average_3D(A,S):    
     # A is the 3D input array
     # S is the blocksize on which averaging is to be performed
-
     m,n,r = np.array(A.shape)//S
     return A.reshape(m,S[0],n,S[1],r,S[2]).mean((1,3,5))
 
 
-def partition_cube(sim, length, cubedim, sim_boxes, zlist=None, z=None, loglike_a=None):
+def partition_cube(sim, length, cubedim, sim_boxes, cparam_list=None, z=None, loglike_a=None):
     for x in xrange(int(length/cubedim)):
         for y in xrange(int(length/cubedim)):
             for r in xrange(int(length/cubedim)):
@@ -354,11 +351,12 @@ def partition_cube(sim, length, cubedim, sim_boxes, zlist=None, z=None, loglike_
                     sim_boxes.append(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim])
                 else:
                     sim_boxes.append(loglike_transform(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], a=loglike_a))
-                if zlist is not None:
-                    zlist.append(z)
-    if zlist is not None:
-        #print('zlist:', zlist)
-        return sim_boxes, zlist
+                
+                # maybe construct cparam list outside of this function
+                if cparam_list is not None:
+                    cparam_list.append(z)
+    if cparam_list is not None:
+        return sim_boxes, cparam_list
     else:
         return sim_boxes
 
@@ -366,13 +364,20 @@ def load_in_simulations(opt):
     nsims = opt.nsims
     sim_boxes = []
     length = 512
+
+    # generalized cond
+    #if opt.n_cond_params > 0:
+    #    cparam_list = []
+        # TODO
+    #    return np.array(sim_boxes), np.array(cparam_list)
+
     if opt.redshift_code:
         zlist = [] # array storing the redshift slice of a given volume in sim_boxes                                    
         for i in xrange(nsims):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                 for j, idx in enumerate(opt.redshift_idxs):
                     sim = ofile["%3.3d"%(idx)][()].copy()
-                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, zlist=zlist, z=opt.redshift_bins[j], loglike_a=opt.loglike_a)
+                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, z=opt.redshift_bins[j], loglike_a=opt.loglike_a)
         return np.array(sim_boxes), np.array(zlist)
     else:
         with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
@@ -409,16 +414,18 @@ def get_parsed_arguments(dattype):
         parser.add_argument('--file_name', default='n512_512Mpc_cosmo1_z0_gridpart.h5')
         parser.add_argument('--datadim', type=int, default=3, help='2 to train on slices, 3 to train on volumes') # not currently functional for 2d   
         parser.add_argument('--loglike_a', type=float, default=4., help='scaling parameter in loglike transformation of data')
-        parser.add_argument('--redshift_idxs', type=list, default=None, help='choose which redshifts to sample from by their index. if None then all redshifts will be sampled. this is useful if you want to exclude certain redshifts and then interpolate a trained model to reproduce them')
         parser.add_argument('--redshift_code', type=bool, default=False, help='determines whether redshift conditional information used for cGAN')
         parser.add_argument('--n_genstep', type=int, default=1, help='number of generator steps for each discriminator step')
         parser.add_argument('--nsims', type=int, default=32, help='number of simulation boxes to get samples from')
         parser.add_argument('--cubedim', type=int, default=128, help='the height / width of the input image to network')
-
+        parser.add_argument('--lcdm', type=int, default=0, help='number of conditional parameters to use for training. lcdm=1 --> Omega_m, lcdm=2 --> Omega_m + Sigma8')
     elif dattype=='grf':
         parser.add_argument('--alpha', type=float, default=-2.0, help='Slope of power law for gaussian random field')
 
     parser.add_argument('--info', type=bool, default=False, help='determines whether infoGAN is employed')
+    parser.add_argument('--get_optimal_discriminator', type=bool, default=False, help='if True, train discriminator for some number of epochs until its loss is minimized')
+    parser.add_argument('--disc_only_epochs', type=int, default=0, help='Number of epochs to train the discriminator after fixing generator, default=0')
+    
     return parser.parse_known_args()[0]
 
 def compute_gradient_norm(model):
@@ -460,236 +467,9 @@ def calc_gradient_penalty(netD, opt, real_data, fake_data, realz_feat=None, fake
     return gradient_penalty
 
 
+def make_feature_maps(array_vals, featureshape, device):
+    feature_maps = torch.from_numpy(np.array([np.full(featureshape, val) for val in array_vals])).to(device)
+    return torch.unsqueeze(feature_maps, 1).float()
 
-class nbody_dataset():
-    
-    def __init__(self, cubedim=64, length=512):
-        
-        self.base_path = '/work/06224/rfederst/maverick2/'
-        self.cubedim = cubedim
-        self.data_path = '/work/06147/pberger/maverick2/gadget_runs/cosmo1/'
-        self.name_base = 'n512_512Mpc_cosmo1_seed'
-        self.datasims = []
-        self.zlist = []
-        self.length=length
-        self.redshift_bins = np.array([10.,7.5,5.,3.,2.,1.5,1.,0.5 ,0.25,0.])
-    
 
-    def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None):
-        if redshift_idxs is None:
-            with h5py.File(self.data_path+'n512_512Mpc_cosmo1_z0_gridpart.h5', 'r') as ofile:
-                for i in xrange(nsims):
-                    sim = ofile['seed'+str(i+1)][()]
-                    self.datasims = partition_cube(sim, self.length, self.cubedim, self.datasims, \
-                                                   loglike_a=loglike_a)
-            
-            ofile.close()
-        
-        else:
-            for i in xrange(nsims):
-                with h5py.File(self.data_path + self.name_base + str(i+1)+'_gridpart.h5', 'r') as ofile:
-                    for idx in redshift_idxs:
-                        print(idx, self.redshift_bins[idx])
-                        sim = ofile['%3.3d'%(idx)][()]
-                        self.datasims, self.zlist = partition_cube(sim, self.length, self.cubedim, self.datasims,\
-                                                                   zlist=self.zlist, z=self.redshift_bins[idx], \
-                                                                    loglike_a=loglike_a)    
-                ofile.close()
-        
-        
-    def restore_generator(self, timestring, epoch=None, n_condparam=0):
-        
-        filepath = self.base_path + '/results/' + timestring
-        sizes = np.array([8., 4., 2., 1.])
-        print(sizes)
-        filen = open(filepath+'/params.txt','r')
-        pdict = pickle.load(filen)
-        model = DC_Generator3D(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes)  
-        if epoch is None:
-            model.load_state_dict(torch.load(filepath+'/netG', map_location='cpu'))
-        else:
-            model.load_state_dict(torch.load(filepath+'/netG_epoch_'+str(epoch), map_location='cpu'))
-
-        model.eval()
-        return model, pdict
-    
-    def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None):
-        z = torch.randn(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1).float()
-        if c is not None:
-            z[:,-1] = c
-        return generator(z).detach().numpy()
-    
-    def view_sim_2d_slices(self, sim):
-        fig, ax = plt.subplots(1, 1)
-        print(ax)
-        tracker = IndexTracker(ax, sim)
-        fig.canvas.mpl_connect('button_press_event', tracker.onscroll)
-        plt.show()
-
-    def compute_power_spectra(self, vols, inverse_loglike_a=None):
-        
-        pks, power_kbins = [], []
-        if inverse_loglike_a is not None: # for generated data
-            vols = inverse_loglike_transform(vols, a=inverse_loglike_a)
-            vols = vols[:,0,:,:,:] # gets rid of single channel
-            
-        kbins = 10**(np.linspace(-1, 2, 30))
-        
-        for i in xrange(vols.shape[0]):
-            pk, bins = get_power(vols[i]-np.mean(vols[i]), self.cubedim, bins=kbins)
-            
-            if np.isnan(pk).all():
-                print('NaN for power spectrum')
-                continue
-            pks.append(pk)
-                        
-        return np.array(pks), np.array(bins)
-    
-    def compute_average_cross_correlation(self, npairs=100, gen_samples=None, real_samples=None):
-        xcorrs, kbin_list = [], []
-        kbins = 10**(np.linspace(-1, 2, 30))
-        for i in xrange(npairs):
-            
-            if gen_samples is None:
-                idxs = np.random.choice(real_samples.shape[0], 2, replace=False)
-                reali = real_samples[idxs[0]]-np.mean(real_samples[idxs[0]])
-                realj = real_samples[idxs[1]]-np.mean(real_samples[idxs[1]])
-                
-                print(reali.shape)
-                print(realj.shape)
-                
-                xc, ks = get_power(deltax=reali, boxlength=self.cubedim, deltax2=realj, log_bins=True) 
-            
-            elif real_samples is None:
-                idxs = np.random.choice(gen_samples.shape[0], 2, replace=False)
-                geni = gen_samples[idxs[0]]-np.mean(gen_samples[idxs[0]])
-                genj = gen_samples[idxs[1]]-np.mean(gen_samples[idxs[1]])
-                xc, ks = get_power(geni, self.cubedim, deltax2=genj, log_bins=True)
-            
-            else:
-                idxreal = np.random.choice(real_samples.shape[0], 1, replace=False)
-                idxgen = np.random.choice(gen_samples.shape[0], 1, replace=False)
-                real = real_samples[idxreal]-np.mean(real_samples[idxreal])
-                gen = gen_samples[idxgen]-np.mean(gen_samples[idxgen])
-                
-                xc, ks = get_power(real, self.cubedim, deltax2=gen, log_bins=True)
-            
-            xcorrs.append(xc)
-            kbin_list.append(ks)
-            
-        return np.array(xcorrs), np.array(kbin_list)
-
-    def compute_matter_bispectrum(self, vols, k1=0.1, k2=0.5):
-        thetas = np.linspace(0.0, 2.5, 10)
-        bks = []
-        for i in xrange(vols.shape[0]):
-            bis = PKL.Bk(vols[i], float(self.cubedim), k1, k2, thetas)
-            bks.append(bis.B)
-        return bks, thetas
-    
-    def plot_voxel_pdf(self, real_vols=None, gen_vols=None, nbins=100):
-        
-        plt.figure()
-        if real_vols is not None:
-            _, bins, _ = plt.hist(real_vols.flatten(), bins=nbins, histtype='step', label='nbody', normed=True)
-            maxval = np.max(real_vols[0])
-        if gen_vols is not None:
-            if real_vols is not None:
-                binz = bins
-            else:
-                binz = nbins
-            plt.hist(gen_vols.flatten(), bins=binz, histtype='step', label='GAN', normed=True)
-            maxval = np.max(gen_vols[0])
-
-        plt.yscale('log')
-        if maxval > 10: # if data are not scaled between -1 and 1
-            plt.xscale('log')
-        plt.legend()
-        plt.ylabel('Normalized Counts')
-        plt.title('Voxel PDF for '+str(self.cubedim)+'**3 Volume')
-        plt.show()
-        
-    def plot_multi_z_vpdfs(self, model, pdict, nsamp=10):    
-        plt.figure()
-        for zed in self.redshift_bins:
-            gen_samps = self.get_samples(model, nsamp, pdict, n_conditional=1, c=zed)
-            plt.hist(gen_samps.flatten(), bins=100, label='z='+str(zed), histtype='step', normed=True)
-        plt.yscale('log')
-        plt.ylabel('Scaled density (a=4)')
-        plt.legend()
-        plt.show()
-        
-    def make_gif_slices(self, vol, name='test', timestr=None, length=None):
-        images = []
-        gifdir = 'figures/gif_dir/'
-        if timestr is not None:
-            
-            if not os.path.isdir(gifdir+timestr):
-                os.mkdir(gifdir+timestr)
-            gifdir += timestr+'/'
-        print('Saving to ', gifdir)
-        if length is None:
-            length = len(nbody.redshift_bins)
-        for i in xrange(length):
-            plooop = (cm.gist_earth((vol[i,:,:]+1)/2)*255).astype('uint8')
-            images.append(Image.fromarray(plooop).resize((512,512)))
-        imageio.mimsave(gifdir+name+'.gif', images, fps=2)
-        
-    def plot_gradnorms(self, timestring):
-        filepath = self.base_path + '/results/' + timestring
-        gen_grad_norms = np.loadtxt(filepath+'/generator_grad_norm.txt')
-        disc_grad_norms = np.loadtxt(filepath+'/discriminator_grad_norm.txt')
-        print(gen_grad_norms.shape)
-        plt.figure()
-        plt.plot(np.arange(len(gen_grad_norms)), gen_grad_norms)
-        plt.title('Generator gradient norms')
-        plt.xlabel('Batch Iteration')
-        plt.ylabel('Gradient Norm')
-        plt.show()
-        
-        plt.figure()
-        plt.plot(np.arange(len(disc_grad_norms)), disc_grad_norms)
-        plt.title('Discriminator gradient norms')
-        plt.xlabel('Batch Iteration')
-        plt.ylabel('Gradient Norm')
-        plt.show()
-        
-    def plot_losses(self, timestring):
-        filepath = self.base_path + '/results/' + timestring
-        gen_losses = np.loadtxt(filepath+'/lossG.txt')
-        disc_losses = np.loadtxt(filepath+'/lossD.txt')
-        plt.figure()
-        plt.plot(np.arange(len(gen_losses)), gen_losses, marker='.')
-        plt.title('Generator')
-        plt.xlabel('Batch Iteration')
-        plt.ylabel('Loss')
-        plt.show()
-        
-        plt.figure()
-        plt.plot(np.arange(len(disc_losses)), disc_losses, marker='.')
-        plt.title('Discriminator gradient norms')
-        plt.xlabel('Batch Iteration')
-        plt.ylabel('Loss')
-        plt.show()
-        
-    def plot_powerspectra(self, genpk=None, genkbins=None, realpk=None, realkbins=None):
-        
-        plt.figure(figsize=(8,6))
-        plt.title('Comparison of Power Spectra with 1 $\\sigma$ Shaded Regions')
-        
-        if realpk is not None:
-            plt.fill_between(realkbins, np.percentile(realpk, 16, axis=0), np.percentile(realpk, 84, axis=0), facecolor='green', alpha=0.3)
-            plt.plot(realkbins, np.median(realpk, axis=0), label='nbody', color='g', marker='.')
-        
-        if genpk is not None:
-            plt.fill_between(genkbins, np.percentile(genpk, 16, axis=0), np.percentile(genpk, 84, axis=0), facecolor='blue', alpha=0.3)
-            plt.plot(genkbins, np.median(genpk, axis=0), label='GAN', color='b', marker='.')
-        
-        plt.legend()
-        plt.yscale('log')
-        plt.xscale('log')
-        plt.xlabel('k', fontsize=14)
-        plt.ylabel('P(k)', fontsize=14)
-        plt.show()     
-     
 

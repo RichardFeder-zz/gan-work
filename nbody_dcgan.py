@@ -69,9 +69,11 @@ save_params(new_dir, opt)
 
 # Initialize Generator and Discriminator                                                                                   
 print('Endact:', endact)
+print('ndf:', opt.ndf)
 netG = DC_Generator3D(opt.ngpu, 1, opt.latent_dim+n_cond_params, opt.ngf, sizes).to(device)
-netD = DC_Discriminator3D(opt.ngpu, 1, opt.ndf, sizes, n_cond_features = n_cond_params, endact=endact).to(device)
-
+netD = DC_Discriminator3D(opt.ngpu, 1, opt.ndf, sizes, n_cond_features = n_cond_params).to(device)
+print('netD:')
+print(netD)
 if opt.netG=='':
     netG.apply(weights_init)
     netD.apply(weights_init)
@@ -122,18 +124,21 @@ class GAN_optimization():
             return self.criterion(output, label)
 
 
-    def discriminator_step(self, real_cpu, zs=None):
+    def discriminator_step(self, real_cpu, disc_opt=False, zs=None):
         self.netD.zero_grad()
 
         # train with real
 
         label = torch.full((self.batchSize,), real_label, device=device)
         real_cpu = torch.unsqueeze(real_cpu, 1).float() # reshape for 1 channel images
+        #print('real cpu has len', len(real_cpu))
         if zs is not None:
             output = self.netD(real_cpu, zfeatures=make_feature_maps(zs, output1shape, device))
         else:
             output = self.netD(real_cpu)
-            
+            #print('here with output length:', len(output))
+            #print(output)
+        #print(len(output), len(label))
         errD_real = self.get_loss(output, opt, label=label)
         errD_real.backward()
         D_x = output.mean().item()
@@ -175,7 +180,8 @@ class GAN_optimization():
             self.optimizerD.step()
         else:
             errD = errD_real + errD_fake
-            if D_G_z1 > 0.2: # might not need this for wgan
+            if D_G_z1 > 0.2 or disc_opt==True: # might not need this for wgan
+                print('optimizer step')
                 self.optimizerD.step()
 
         return errD, D_x, D_G_z1, dnorm
@@ -212,10 +218,12 @@ class GAN_optimization():
         self.optimizerG.step()
         return errG, D_G_z2, gnorm
 
-    def single_train_step(self, real_cpu, zs=None):
-        errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, zs=zs)
+    def single_train_step(self, real_cpu, disc_opt=False, zs=None):
+        errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, disc_opt=disc_opt, zs=zs)
         for i in xrange(opt.n_genstep):
             errG, D_G_z2, gnorm = self.generator_step(zs=zs)
+        if opt.get_optimal_discriminator:
+            return errD, D_x, D_G_z1, dnorm
         return errD, errG, D_x, D_G_z1, D_G_z2, gnorm, dnorm
 
 ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG)
@@ -259,7 +267,8 @@ def save_current_state(ganopt, epoch, new_dir, gnorms, dnorms, lossGs, lossDs):
     np.savetxt(new_dir+'/discriminator_loss_epoch_'+str(epoch)+'.txt',np.array(lossDs))
 
 
-def training_epoch(opt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms):
+def training_epoch(opt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms, disc_opt=False):
+    print('disc opt is', disc_opt)
     sim_idxs = np.arange(len(sim_boxes))
     nbatch = 0
     while len(sim_idxs)>0:
@@ -273,21 +282,30 @@ def training_epoch(opt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms):
         #    errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, cparams=cparams)                                                                
         if opt.redshift_code:
             zs = zlist[choice]
-            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs)
+            if opt.get_optimal_discriminator:
+                errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, zs=zs, disc_opt=disc_opt)
+            else:
+                errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs)
         else:
-            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu)
-
-        print('errG:', errG.item(),'errD:', errD.item(), 'D_G_z1:', D_G_z1, 'Gnorm:', gn, 'Dnorm:', dn)
-
-        assert errG.item() != 0.0 # these make sure we're not falling into mode collapse or an outperforming discriminator                                               
+            if opt.get_optimal_discriminator:
+                errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, disc_opt=disc_opt)
+            else:
+                errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu)
+        if opt.get_optimal_discriminator:
+            print('errD:', errD.item(), 'D_G_z1:', D_G_z1, 'Dnorm:', dn)
+        else:
+            print('errG:', errG.item(),'errD:', errD.item(), 'D_G_z1:', D_G_z1, 'Gnorm:', gn, 'Dnorm:', dn)
+            assert errG.item() != 0.0 # these make sure we're not falling into mode collapse or an outperforming discriminator
+            gnorms.append(gn)
+            lossGs.append(errG.item())
+        
         assert errD.item() != 0.0
-
-        gnorms.append(gn)
         dnorms.append(dn)
-        lossGs.append(errG.item())
         lossDs.append(errD.item())
 
-    print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f' % (i, opt.n_epochs, np.round(np.mean(lossDs[-nbatch:]), 4), np.round(np.mean(lossGs[-nbatch:]), 4), np.round(D_x, 4), np.round(D_G_z1, 4), np.round(D_G_z2, 4)))
+    if not opt.get_optimal_discriminator:
+        
+        print('[%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f' % (i, opt.n_epochs, np.round(np.mean(lossDs[-nbatch:]), 4), np.round(np.mean(lossGs[-nbatch:]), 4), np.round(D_x, 4), np.round(D_G_z1, 4), np.round(D_G_z2, 4)))
 
     save_current_state(ganopt, epoch, new_dir, gnorms, dnorms, lossGs, lossDs)
 
@@ -305,18 +323,21 @@ save_nn(ganopt.netD, new_dir+'/netD')
 np.savetxt(new_dir+'/generator_grad_norm.txt', np.array(gnorms))
 np.savetxt(new_dir+'/discriminator_grad_norm.txt', np.array(dnorms))
 
-if opt.get_optimal_discriminator:
-    #set number of generator steps to zero and train discriminator until it minimizes loss                                                                              
-    print 'Training discriminator only to minimize its loss..'
-    opt.n_genstep = 0
-    for i in xrange(10):
-        lossGs, lossDs, gnorms, dnorms = training_epoch(opt, opt.n_epochs+i, sim_boxes, lossGs, lossDs, gnorms, dnorms)
-        
-save_nn(ganopt.netD, new_dir+'/netD_optimal')
-
-
-
-
-
 plot_loss_iterations(np.array(lossDs), np.array(lossGs), new_dir)
+
+if opt.get_optimal_discriminator:
+    '''set number of generator steps to zero and train discriminator until it minimizes loss'''                                               
+    print('Training discriminator only to minimize its loss..')
+    opt.n_genstep = 0
+    for i in xrange(opt.disc_only_epochs):
+        lossGs, lossDs, gnorms, dnorms = training_epoch(opt, opt.n_epochs+i, sim_boxes, lossGs, lossDs, gnorms, dnorms, disc_opt=True)
+        save_nn(ganopt.netD, richard_workdir+opt.netG+'/netD_optimal_epoch_'+str(i))
+        
+#save_nn(ganopt.netD, new_dir+'/netD_optimal')
+save_nn(ganopt.netD, richard_workdir+opt.netG+'/netD_optimal')
+
+
+
+
+#plot_loss_iterations(np.array(lossDs), np.array(lossGs), new_dir)
 #plot_loss_iterations(np.array(lossD_vals), np.array(lossG_vals), new_dir)

@@ -26,7 +26,7 @@ import scipy.ndimage
 from mpl_toolkits.mplot3d import Axes3D
     
 class nbody_dataset():
-
+    device = torch.device("cuda:0")
     def __init__(self, cubedim=64, length=512):
 
         self.base_path = '/work/06224/rfederst/maverick2/'
@@ -39,7 +39,6 @@ class nbody_dataset():
         self.z_idx_dict = dict({10:'000',7.5:'001',5.:'002',3.:'003',2.:'004',1.5:'005',1.:'006',0.5:'007',0.25:'008',0.:'009'})
         self.redshift_bins = np.array([10.,7.5,5.,3.,2.,1.5,1.,0.5 ,0.25,0.])
         self.colormap = matplotlib.cm.jet(np.linspace(1, 0.1, len(self.redshift_bins))) # for plotting different zs
-
 
     def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None):
         if redshift_idxs is None:
@@ -86,36 +85,37 @@ class nbody_dataset():
         return allgenpks, allgenks, allrealpks, allrealks
 
     def restore_generator(self, timestring, epoch=None, n_condparam=0, discriminator=False):
-        print('discriminator:', discriminator)
+        print('device:', self.device)
         filepath = self.base_path + '/results/' + timestring
         sizes = np.array([8., 4., 2., 1.])
         print(sizes)
         filen = open(filepath+'/params.txt','r')
         pdict = pickle.load(filen)
-        model = DC_Generator3D(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes)
+        model = DC_Generator3D(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes).to(self.device)
         
         if epoch is None:
-            model.load_state_dict(torch.load(filepath+'/netG', map_location='cpu'))
+            model.load_state_dict(torch.load(filepath+'/netG', map_location=self.device))
         else:
             if discriminator:
-                disc_model = DC_Discriminator3D(pdict['ngpu'], 1, pdict['ndf'], sizes, n_cond_features=n_condparam)
-                disc_model.load_state_dict(torch.load(filepath+'/netD_epoch_'+str(epoch), map_location='cpu'))
+                disc_model = DC_Discriminator3D(pdict['ngpu'], 1, pdict['ndf'], sizes, n_cond_features=n_condparam).to(self.device)
+                disc_model.load_state_dict(torch.load(filepath+'/netD_epoch_'+str(epoch), map_location=self.device))
                 disc_model.eval()
-            model.load_state_dict(torch.load(filepath+'/netG_epoch_'+str(epoch), map_location='cpu'))
+            model.load_state_dict(torch.load(filepath+'/netG_epoch_'+str(epoch), map_location=self.device))
         model.eval()
         if discriminator:
             return model, pdict, disc_model
         return model, pdict
 
     def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None, discriminator=None):
-        z = torch.randn(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1).float()
+        z = torch.randn(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
+        print('self.device:', self.device)
         if c is not None:
             z[:,-1] = c
         gensamps = generator(z)
         if discriminator is not None:
             disc_outputs = discriminator(gensamps)
-            return gensamps.detach().numpy(), disc_outputs.detach().numpy()
-        return gensamps.detach().numpy()
+            return gensamps.cpu().detach().numpy(), disc_outputs.cpu().detach().numpy()
+        return gensamps.cpu().detach().numpy()
 
     def view_sim_2d_slices(self, sim):
         fig, ax = plt.subplots(1, 1)
@@ -347,13 +347,15 @@ class nbody_dataset():
             plt.savefig('figures/gif_dir/'+timestring+'/gen_disc_losses.pdf', bbox_inches='tight')
         plt.show()
     
-    def plot_powerspectra(self, genpks=[], genkbins=[], labels=[],realpk=None, realkbins=None, timestr=None, z=None):
+    def plot_powerspectra(self, genpks=[], genkbins=[], labels=[],realpk=None, realkbins=None, timestr=None, z=None, title=None):
         title = 'Comparison of Power Spectra with 1$\\sigma$ Shaded Regions'
         colors = ['darkslategrey', 'royalblue','m', 'maroon']
-        plt.figure(figsize=(8,6))
-        if z is not None:
+        fig = plt.figure(figsize=(8,6))
+        
+        if title is not None:
+            plt.title(title)
+        elif z is not None:
             title += ', z='+str(z)
-#         plt.title(title)
         
         if realpk is not None:
             plt.fill_between(realkbins, np.percentile(realpk, 16, axis=0), np.percentile(realpk, 84, axis\
@@ -378,33 +380,38 @@ class nbody_dataset():
         if timestr is not None:
             plt.savefig('figures/gif_dir/'+timestr+'/power_spectra.pdf', bbox_inches='tight')
         plt.show()
+        
+        return fig
             
-            
-    def discriminator_rejection_sampling(self, generator, discriminator, pdict, batch_size=32, eps=0.01, gamma=0, n_samp=0, n_conditional=0):
+    def discriminator_rejection_sampling(self, generator, discriminator, pdict, batch_size=32, eps=0.01, gamma=0, n_samp=0, n_conditional=0, dmstar_n_samp=200, ngpu=1):
         
         n = 0
         counter = 0
         gen_samps = []
+        #device = torch.device("cuda:0")
+        print 'Estimating D_M*...'
+        # estimate dm_star
+        z = torch.randn(dmstar_n_samp, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
+        gensamps = generator(z)
+        discriminator_outs = discriminator(gensamps).cpu().detach().numpy()
+        disc_logit_outs = -np.log((1./discriminator_outs)-1)
+        dm_star = np.max(disc_logit_outs)
+
+
         while n<n_samp:
-            z = torch.randn(batch_size, pdict['latent_dim']+n_conditional, 1, 1, 1).float()
+            z = torch.randn(batch_size, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
             gensamps = generator(z)
-            discriminator_outputs = discriminator(gensamps).detach().numpy()
+            discriminator_outputs = discriminator(gensamps).cpu().detach().numpy()
             disc_logit_outputs = -np.log((1./discriminator_outputs)-1)
-#             print('logit out:', disc_logit_outputs)
-            dm_star = np.max(disc_logit_outputs)
             fs = disc_logit_outputs - dm_star - np.log(1-np.exp(disc_logit_outputs-dm_star-eps))-gamma
             acceptance_probs = 1./(1+np.exp(-fs))
             print('acceptance probs:', acceptance_probs)
             rand = np.random.uniform(size=len(acceptance_probs))
-#             print('rand:', rand)
             accept = rand<acceptance_probs
-            print('accept:', accept)
             if np.sum(accept)>0:
-                gensamps = gensamps.detach().numpy()[accept]
-                
+                gensamps = gensamps.cpu().detach().numpy()[accept]
                 for samp in gensamps:
                     gen_samps.append(samp)
-                
                 n += np.sum(accept)
                 print('n + '+str(np.sum(accept)), 'n='+str(n))
             

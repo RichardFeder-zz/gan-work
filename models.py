@@ -189,7 +189,7 @@ class DC_Generator3D(nn.Module):
         return output
 
 class DC_Discriminator3D(nn.Module):
-    def __init__(self, ngpu, nc, ndf, sizes, n_cond_features=0):
+    def __init__(self, ngpu, nc, ndf, sizes, endact_disc='sigmoid', n_cond_features=0):
         super(DC_Discriminator3D, self).__init__()
         self.ngpu = ngpu
 
@@ -201,6 +201,7 @@ class DC_Discriminator3D(nn.Module):
                 first_layer.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
                 #first_layer.append(nn.Conv3d(ndf*int(size), ndf*int(size), 3, stride=1, padding=1, bias=False)) # extra layer
                 #layers.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
+                #layers.append(nn.LeakyReLU(0.2, inplace=True))
                 first_layer.append(nn.LeakyReLU(0.2, inplace=True))
             # if there are conditional parameters this will accommoate an extra feature map 
             elif i==1:
@@ -215,22 +216,27 @@ class DC_Discriminator3D(nn.Module):
             outc = ndf*int(size)
             #layers.append(nn.LeakyReLU(0.2, inplace=True))
 
-        layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
-        layers.append(nn.Sigmoid())
-
+        #layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
+        if endact_disc == 'sigmoid':
+            layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
+            layers.append(nn.Sigmoid())
+        elif endact_disc == 'linear':
+            layers.append(nn.Linear(outc, 1))
         self.main = nn.Sequential(*layers)
         self.first = nn.Sequential(*first_layer)
 
-    def forward(self, input, zfeatures=None):
+    def forward(self, input, cond_features=None):
         if input.is_cuda and self.ngpu > 1:
+            print('goin with ngpu='+str(self.ngpu))
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
-            #print(output1.shape)
-            if zfeatures is not None:
-                #print('zfeatures:', zfeatures)
-                output1 = torch.cat((output1, zfeatures), 1)
+            #print('output1 shape here is ', output1.shape)
+            if cond_features is not None:
+                output1 = torch.cat((output1, cond_features), 1)
             output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))
-            
+            #output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:  
-            output = self.main(input)
-
+            output1 = self.first(input)
+            #output = self.main(input)
+            output = self.main(output1)
+        #print('output has shape:', output.shape)
         return output.view(-1, 1).squeeze(1)
