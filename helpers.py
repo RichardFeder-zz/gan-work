@@ -408,7 +408,7 @@ def get_parsed_arguments(dattype):
     parser.add_argument('--manualSeed', type=int, help='manual seed')
     parser.add_argument('--wgan', type=bool, default=False, help='use Wasserstein GAN loss/training')
     parser.add_argument('--grad_lam', type=float, default=1., help='coefficient in gradient peanlty term')
-
+    parser.add_argument('--extra_conv_layers', type=int, default=0, help='number of extra convolutional layers at the end of generator network, default 0')
     if dattype=='nbody':
         parser.add_argument('--base_path', default='/work/06147/pberger/maverick2/gadget_runs/cosmo1/')
         parser.add_argument('--file_name', default='n512_512Mpc_cosmo1_z0_gridpart.h5')

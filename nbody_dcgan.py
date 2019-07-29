@@ -11,13 +11,14 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torchvision.utils as vutils
+from astropy.cosmology import FlatLambdaCDM
 from torchvision import transforms
 from torch.utils import data
 from power_spec import *
 from models import *
 from helpers import *
 
-
+cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 opt = get_parsed_arguments('nbody')
 
 richard_workdir = '/work/06224/rfederst/maverick2/results/'
@@ -43,6 +44,11 @@ sizes = np.array([8,4,2,1])
 #redshift_bins = np.array([1., 0.5, 0.25, 0.])
 #redshift_strings = np.array(['006', '007', '008', '009'])
 redshift_bins = np.array([3., 1.5, 0.5, 0.])
+
+age_bins = cosmo.age(redshift_bins)/cosmo.age(0)
+print('age_bins:', age_bins)
+
+
 redshift_strings = np.array(['003', '005','007', '009'])
 #redshift_bins = np.array([5., 3., 1., 0.5, 0.])
 #redshift_strings = np.array(['002', '003', '006', '007', '009'])
@@ -70,10 +76,9 @@ save_params(new_dir, opt)
 # Initialize Generator and Discriminator                                                                                   
 print('Endact:', endact)
 print('ndf:', opt.ndf)
-netG = DC_Generator3D(opt.ngpu, 1, opt.latent_dim+n_cond_params, opt.ngf, sizes).to(device)
+netG = DC_Generator3D(opt.ngpu, 1, opt.latent_dim+n_cond_params, opt.ngf, sizes, extra_conv_layers=opt.extra_conv_layers).to(device)
 netD = DC_Discriminator3D(opt.ngpu, 1, opt.ndf, sizes, n_cond_features = n_cond_params).to(device)
-print('netD:')
-print(netD)
+
 if opt.netG=='':
     netG.apply(weights_init)
     netD.apply(weights_init)
@@ -111,9 +116,12 @@ class GAN_optimization():
     def draw_latent_z(self, latent_dim, device, redshifts=None):
         noise = torch.randn(self.batchSize, latent_dim, 1, 1, 1, device=device)
         if redshifts is not None:
-            fake_redshifts = np.random.choice(redshift_bins, opt.batchSize)
-            noise = torch.cat((noise, torch.from_numpy(fake_redshifts).float().view(-1,1,1,1,1).to(device)),1)
-            return noise, fake_redshifts
+            #fake_redshifts = np.random.choice(redshift_bins, opt.batchSize)
+            fake_ages = np.random.choice(age_bins, opt.batchSize)
+            noise = torch.cat((noise, torch.from_numpy(fake_ages).float().view(-1,1,1,1,1).to(device)),1)
+            #noise = torch.cat((noise, torch.from_numpy(fake_redshifts).float().view(-1,1,1,1,1).to(device)),1)
+            #return noise, fake_redshifts
+            return noise, fake_ages
         return noise
 
 
@@ -132,8 +140,10 @@ class GAN_optimization():
         label = torch.full((self.batchSize,), real_label, device=device)
         real_cpu = torch.unsqueeze(real_cpu, 1).float() # reshape for 1 channel images
         #print('real cpu has len', len(real_cpu))
+        
+        #print('zs at discriminator (should be ages):', zs)
         if zs is not None:
-            output = self.netD(real_cpu, zfeatures=make_feature_maps(zs, output1shape, device))
+            output = self.netD(real_cpu, cond_features=make_feature_maps(zs, output1shape, device))
         else:
             output = self.netD(real_cpu)
             #print('here with output length:', len(output))
@@ -150,11 +160,13 @@ class GAN_optimization():
         else:
             noise = self.draw_latent_z(opt.latent_dim, device)
                                                                                                                                                        
+        #print('fake_zs at discriminator:', fake_zs)
+
         fake = self.netG(noise)
         label.fill_(fake_label)
 
         if zs is not None:
-            output = self.netD(fake.detach(), zfeatures=make_feature_maps(fake_zs, output1shape, device))
+            output = self.netD(fake.detach(), cond_features=make_feature_maps(fake_zs, output1shape, device))
         else:
             output = self.netD(fake.detach())
         
@@ -181,7 +193,7 @@ class GAN_optimization():
         else:
             errD = errD_real + errD_fake
             if D_G_z1 > 0.2 or disc_opt==True: # might not need this for wgan
-                print('optimizer step')
+                #print('optimizer step')
                 self.optimizerD.step()
 
         return errD, D_x, D_G_z1, dnorm
@@ -200,13 +212,17 @@ class GAN_optimization():
         else:
             noise = self.draw_latent_z(opt.latent_dim, device)
         
+        #print('fakezs at gensteep:', fake_zs)
+        #print('zs at gen step should be ages:', zs)
+
+
         fake = self.netG(noise)
         label = torch.full((self.batchSize,), real_label, device=device)
         self.netG.zero_grad()
         label.fill_(real_label)  # fake labels are real for generator cost  
 
         if zs is not None:
-            output = self.netD(fake, zfeatures=make_feature_maps(fake_zs, output1shape, device))
+            output = self.netD(fake, cond_features=make_feature_maps(fake_zs, output1shape, device))
         else:
             output = self.netD(fake)
         
@@ -282,10 +298,14 @@ def training_epoch(opt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms, disc_o
         #    errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, cparams=cparams)                                                                
         if opt.redshift_code:
             zs = zlist[choice]
+            ages = cosmo.age(zs)/cosmo.age(0)
+            #print('ages:', ages)
             if opt.get_optimal_discriminator:
-                errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, zs=zs, disc_opt=disc_opt)
+                errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, zs=ages, disc_opt=disc_opt)
+                #errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, zs=zs, disc_opt=disc_opt)
             else:
-                errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs)
+                errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=ages)
+                #errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs)
         else:
             if opt.get_optimal_discriminator:
                 errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, disc_opt=disc_opt)
@@ -330,6 +350,8 @@ if opt.get_optimal_discriminator:
     print('Training discriminator only to minimize its loss..')
     opt.n_genstep = 0
     for i in xrange(opt.disc_only_epochs):
+        print('Epoch '+str(i)+' of '+str(opt.disc_only_epochs))
+        print
         lossGs, lossDs, gnorms, dnorms = training_epoch(opt, opt.n_epochs+i, sim_boxes, lossGs, lossDs, gnorms, dnorms, disc_opt=True)
         save_nn(ganopt.netD, richard_workdir+opt.netG+'/netD_optimal_epoch_'+str(i))
         

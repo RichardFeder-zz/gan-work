@@ -146,7 +146,7 @@ class DC_Discriminator(nn.Module):
 
 
 class DC_Generator3D(nn.Module):
-    def __init__(self, ngpu, nc, nz, ngf, sizes, endact='tanh'):
+    def __init__(self, ngpu, nc, nz, ngf, sizes, extra_conv_layers=0, endact='tanh'):
         super(DC_Generator3D, self).__init__()
         self.ngpu = ngpu
         layers = []
@@ -169,9 +169,10 @@ class DC_Generator3D(nn.Module):
             layers.append(nn.BatchNorm3d(outc))
             layers.append(nn.ReLU(True))
 
-        #layers.append(nn.ConvTranspose3d(outc, outc, 3, stride=1, padding=1, bias=False)) # extra layer
-        #layers.append(nn.BatchNorm3d(outc))
-        #layers.append(nn.ReLU(True))
+        for i in xrange(extra_conv_layers):
+            layers.append(nn.ConvTranspose3d(outc, outc, 3, stride=1, padding=1, bias=False)) # extra layer
+            layers.append(nn.BatchNorm3d(outc))
+            layers.append(nn.ReLU(True))
 
         layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
         #layers.append(nn.ConvTranspose3d(outc, nc, 2, stride=2, padding=0, bias=False))
@@ -227,9 +228,7 @@ class DC_Discriminator3D(nn.Module):
 
     def forward(self, input, cond_features=None):
         if input.is_cuda and self.ngpu > 1:
-            print('goin with ngpu='+str(self.ngpu))
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
-            #print('output1 shape here is ', output1.shape)
             if cond_features is not None:
                 output1 = torch.cat((output1, cond_features), 1)
             output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))
@@ -238,5 +237,4 @@ class DC_Discriminator3D(nn.Module):
             output1 = self.first(input)
             #output = self.main(input)
             output = self.main(output1)
-        #print('output has shape:', output.shape)
         return output.view(-1, 1).squeeze(1)

@@ -24,6 +24,20 @@ import Pk_library as PKL
 from PIL import Image
 import scipy.ndimage
 from mpl_toolkits.mplot3d import Axes3D
+from astropy.cosmology import FlatLambdaCDM
+
+cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
+
+
+class HiddenPrints:
+    def __enter__(self):
+        self._original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stdout = self._original_stdout
+
     
 class nbody_dataset():
     device = torch.device("cuda:0")
@@ -59,7 +73,7 @@ class nbody_dataset():
                         self.datasims, self.zlist = partition_cube(sim, self.length, self.cubedim, self.datasims, cparam_list=self.zlist, z=self.redshift_bins[idx],loglike_a=loglike_a)
                 ofile.close()
         
-    def compare_pk_diffz(self, model, pdict, redshift_idxs, nsamp=100, timestr=None):
+    def compare_pk_diffz(self, model, pdict, redshift_idxs, nsamp=100, timestr=None, age=False, loglike_a=4.0):
         allgenpks = []
         allgenks = []
         allrealpks = []
@@ -72,26 +86,31 @@ class nbody_dataset():
             
 #             self.load_in_sims(1, redshift_idxs=[zed_idx])
                 realpks, realks = self.compute_power_spectra(np.array(realsims)[:nsamp])
-                gen_samps = self.get_samples(model, nsamp, pdict, n_conditional=1, c=self.redshift_bins[zed_idx])
-                genpks, genks = self.compute_power_spectra(gen_samps, inverse_loglike_a=4.0)
+                cond = self.redshift_bins[zed_idx]
+                if age:
+                    cond = (cosmo.age(cond).value)/cosmo.age(0).value
+                    print('cond:', cond)
+                
+                gen_samps = self.get_samples(model, nsamp, pdict, n_conditional=1, c=cond)
+                genpks, genks = self.compute_power_spectra(gen_samps, inverse_loglike_a=loglike_a)
                 
                 allgenpks.append(genpks)
                 allgenks.append(genks)
                 allrealpks.append(realpks)
                 allrealks.append(realks)
                 
-                self.plot_powerspectra(genpk=genpks, genkbins=genks, realpk=realpks, realkbins=realks, timestr=timestr, z=self.redshift_bins[zed_idx])
+                self.plot_powerspectra(genpks=[genpks], genkbins=[genks], realpk=realpks, realkbins=realks, timestr=timestr, z=self.redshift_bins[zed_idx], labels=['gan'])
             ofile.close()
         return allgenpks, allgenks, allrealpks, allrealks
 
-    def restore_generator(self, timestring, epoch=None, n_condparam=0, discriminator=False):
+    def restore_generator(self, timestring, epoch=None, n_condparam=0, extra_conv_layers=0, discriminator=False):
         print('device:', self.device)
         filepath = self.base_path + '/results/' + timestring
         sizes = np.array([8., 4., 2., 1.])
         print(sizes)
         filen = open(filepath+'/params.txt','r')
         pdict = pickle.load(filen)
-        model = DC_Generator3D(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes).to(self.device)
+        model = DC_Generator3D(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes, extra_conv_layers=extra_conv_layers).to(self.device)
         
         if epoch is None:
             model.load_state_dict(torch.load(filepath+'/netG', map_location=self.device))
@@ -124,13 +143,14 @@ class nbody_dataset():
         fig.canvas.mpl_connect('button_press_event', tracker.onscroll)
         plt.show()
         
-    def compute_power_spectra(self, vols, inverse_loglike_a=None, unsqueeze=True):
+    def compute_power_spectra(self, vols, inverse_loglike_a=None, unsqueeze=False):
 
         pks, power_kbins = [], []
         if inverse_loglike_a is not None: # for generated data                                            
             vols = inverse_loglike_transform(vols, a=inverse_loglike_a)
-            if unsqueeze:
-                vols = vols[:,0,:,:,:] # gets rid of single channel                                           
+            unsqueeze = True
+        if unsqueeze:
+            vols = vols[:,0,:,:,:] # gets rid of single channel                                           
 
         kbins = 10**(np.linspace(-1, 2, 30))
 
@@ -183,7 +203,7 @@ class nbody_dataset():
         thetas = np.linspace(0.0, 2.5, 10)
         bks = []
         for i in xrange(vols.shape[0]):
-            bis = PKL.Bk(vols[i], float(self.cubedim), k1, k2, thetas)
+            bis = PKL.Bk(vols[i]-np.mean(vols[i]), float(self.cubedim), k1, k2, thetas)
             bks.append(bis.B)
         return bks, thetas
 
@@ -215,36 +235,39 @@ class nbody_dataset():
             plt.savefig('figures/gif_dir/'+timestr+'/voxel_pdf_epoch'+str(epoch)+'.pdf', bbox_inches='tight')
         plt.show()
 
-    def plot_multi_z_vpdfs(self, model=None, pdict=None, zs=None, nsamp=50, timestr=None, epoch=None):
+    def plot_multi_z_vpdfs(self, model=None, pdict=None, zs=None, nsamp=50, timestr=None, age=False, loglike_a=4.0, epoch=None):
         pks, ks = [], []
         zslices = []
         if zs is not None:
-            zeds = zs
+            cond = zs
         else:
-            zeds = self.redshift_bins
+            cond = self.redshift_bins
             
-        colormap = matplotlib.cm.jet(np.linspace(1, 0.1, len(zeds)))
+        if age:
+            cond = cosmo.age(cond).value/cosmo.age(0).value
+
+        colormap = matplotlib.cm.jet(np.linspace(1, 0.1, len(cond)))
         plt.figure(figsize=(8,6))
         if model is None:
             plt.title('GADGET N-body Samples')
         else:
             plt.title('Generated Samples')
-        for i, zed in enumerate(zeds):
+        for i, c in enumerate(cond):
             if model is not None:
-                gen_samps = self.get_samples(model, nsamp, pdict, n_conditional=1, c=zed)
-                pk, kbins = self.compute_power_spectra(gen_samps, inverse_loglike_a=4.0)
+                gen_samps = self.get_samples(model, nsamp, pdict, n_conditional=1, c=c)
+                pk, kbins = self.compute_power_spectra(gen_samps, inverse_loglike_a=loglike_a)
 
             else:
-                print('index is ', int(self.z_idx_dict[zed]))
+                #print('index is ', int(self.z_idx_dict[zed]))
                 self.datasims = []
-                self.load_in_sims(1, loglike_a=4., redshift_idxs=[int(self.z_idx_dict[zed])])
+                self.load_in_sims(1, loglike_a=loglike_a, redshift_idxs=[int(self.z_idx_dict[zs[i]])])
                 print(len(self.datasims))
                 gen_samps = np.array(self.datasims[:nsamp])
                 print(gen_samps.shape)
-                pk, kbins = self.compute_power_spectra(gen_samps, inverse_loglike_a=4.0, unsqueeze=False)
+                pk, kbins = self.compute_power_spectra(gen_samps, inverse_loglike_a=loglike_a, unsqueeze=False)
             pks.append(pk)
             ks.append(kbins)
-            plt.hist(gen_samps.flatten(), bins=100, label='z='+str(zed), histtype='step', color=colormap[i], normed=True)
+            plt.hist(gen_samps.flatten(), bins=100, label='z='+str(zs[i]), histtype='step', color=colormap[i], normed=True)
         plt.yscale('log')
         plt.ylabel('Scaled density (a=4)')
         plt.legend()
@@ -263,7 +286,7 @@ class nbody_dataset():
             plt.title('Generated Samples')
         for i in xrange(len(pks)):
             plt.fill_between(ks[i], np.percentile(pks[i], 16, axis=0), np.percentile(pks[i], 84, axis=0), alpha=0.3, color=colormap[i])
-            plt.plot(ks[i], np.median(pks[i], axis=0), marker='.', c=colormap[i], label='z='+str(zeds[i]))
+            plt.plot(ks[i], np.median(pks[i], axis=0), marker='.', c=colormap[i], label='z='+str(zs[i]))
         plt.yscale('log')
         plt.xscale('log')
         plt.xlabel('$k$', fontsize=14)
@@ -346,17 +369,52 @@ class nbody_dataset():
         if save:
             plt.savefig('figures/gif_dir/'+timestring+'/gen_disc_losses.pdf', bbox_inches='tight')
         plt.show()
+
+
+    def plot_bispectra(self, k1, k2, genbks=[], thetabins=[], labels=[], realbk=None, realthetabins=[],timestr=None, z=None, title=None):
+        fig = plt.figure(figsize=(8,6))
+
+        if realbk is not None:
+            plt.fill_between(realthetabins, np.percentile(realbk, 16, axis=0), np.percentile(realbk, 84, axis=0), facecolor='green', alpha=0.4)
+            plt.plot(realthetabins, np.median(realbk, axis=0), label='nbody', color='forestgreen', marker='.')
+            plt.plot(realthetabins, np.percentile(realbk, 16, axis=0), color='forestgreen')
+            plt.plot(realthetabins, np.percentile(realbk, 84, axis=0), color='forestgreen')
+
+
+        if len(genbks)>0:
+            for i, genbk in enumerate(genbks):
+                plt.fill_between(thetabins[i], np.percentile(genbk, 16, axis=0), np.percentile(genkk, 84, axis=\
+0), alpha=0.2, color=colors[i])
+                plt.plot(thetabins[i], np.median(genbk, axis=0), label=labels[i], marker='.', color=colors[i])
+                plt.plot(thetabins[i], np.percentile(genbk, 16, axis=0), linewidth=0.75, color=colors[i])
+                plt.plot(thetabins[i],  np.percentile(genbk, 84, axis=0), linewidth=0.75, color=colors[i])
+
+
+        plt.legend()
+        plt.xlabel('$\\theta$ (radian)', fontsize=14)
+        plt.ylabel('$B(k)$ $(h^{-6} Mpc^6)$', fontsize=14)
+        plt.title('Bispectrum ($k_1=$'+str(k1)+', $k_2=$'+str(k2)+') $\pm 1\\sigma$ shaded regions', fontsize=14)
+        plt.yscale('log')
+        
+        if timestr is not None:
+            plt.savefig('figures/gif_dir/'+timestr+'/bispectra_'+str(k1)+'_'+str(k2)+'.pdf', bbox_inches='tight')
+        plt.show()
+        
+        return fig
     
     def plot_powerspectra(self, genpks=[], genkbins=[], labels=[],realpk=None, realkbins=None, timestr=None, z=None, title=None):
-        title = 'Comparison of Power Spectra with 1$\\sigma$ Shaded Regions'
+        if title is None:
+            title = 'Comparison of Power Spectra with 1$\\sigma$ Shaded Regions'
         colors = ['darkslategrey', 'royalblue','m', 'maroon']
         fig = plt.figure(figsize=(8,6))
         
-        if title is not None:
-            plt.title(title)
-        elif z is not None:
+        #if title is not None:
+        #    plt.title(title)
+        if z is not None:
             title += ', z='+str(z)
         
+        plt.title(title)
+
         if realpk is not None:
             plt.fill_between(realkbins, np.percentile(realpk, 16, axis=0), np.percentile(realpk, 84, axis\
 =0), facecolor='green', alpha=0.4)
@@ -365,8 +423,10 @@ class nbody_dataset():
             plt.plot(realkbins, np.percentile(realpk, 84, axis=0), color='forestgreen')
         
         if len(genpks)>0:
+            print(len(genpks))
             for i, genpk in enumerate(genpks):
-
+                print(colors[i])
+                print(labels[i])
                 plt.fill_between(genkbins[i], np.percentile(genpk, 16, axis=0), np.percentile(genpk, 84, axis=0), alpha=0.2, color=colors[i])
                 plt.plot(genkbins[i], np.median(genpk, axis=0), label=labels[i], marker='.', color=colors[i])
                 plt.plot(genkbins[i], np.percentile(genpk, 16, axis=0), linewidth=0.75, color=colors[i])
@@ -383,29 +443,48 @@ class nbody_dataset():
         
         return fig
             
-    def discriminator_rejection_sampling(self, generator, discriminator, pdict, batch_size=32, eps=0.01, gamma=0, n_samp=0, n_conditional=0, dmstar_n_samp=200, ngpu=1):
+    def discriminator_rejection_sampling(self, generator, discriminator, pdict, batch_size=32, eps=0.01, gamma=0, n_samp=0, n_conditional=0, dmstar_n_samp=200, ngpu=1, redshift=None):
         
         n = 0
         counter = 0
         gen_samps = []
-        #device = torch.device("cuda:0")
+        device = torch.device("cuda:0")
         print 'Estimating D_M*...'
         # estimate dm_star
         z = torch.randn(dmstar_n_samp, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
+        output1shape = (pdict['cubedim']/2, pdict['cubedim']/2, pdict['cubedim']/2)
+        print 'output1shape:', output1shape
+        
+        if redshift is not None:
+            z[:,-1] = redshift
+
+        #print(z[:,-1])
+
         gensamps = generator(z)
-        discriminator_outs = discriminator(gensamps).cpu().detach().numpy()
+        if redshift is not None:
+            discriminator_outs = discriminator(gensamps, cond_features=make_feature_maps(z[:,-1].cpu(), output1shape, device)).cpu().detach().numpy()
+
+        else:
+            discriminator_outs = discriminator(gensamps).cpu().detach().numpy()
         disc_logit_outs = -np.log((1./discriminator_outs)-1)
         dm_star = np.max(disc_logit_outs)
 
 
         while n<n_samp:
             z = torch.randn(batch_size, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
+
+            if redshift is not None:
+                z[:,-1] = redshift
+            
             gensamps = generator(z)
-            discriminator_outputs = discriminator(gensamps).cpu().detach().numpy()
+            
+            if redshift is not None:
+                discriminator_outputs = discriminator(gensamps, cond_features=make_feature_maps(z[:,-1].cpu(), output1shape, device)).cpu().detach().numpy()
+            else:
+                discriminator_outputs = discriminator(gensamps).cpu().detach().numpy()
             disc_logit_outputs = -np.log((1./discriminator_outputs)-1)
             fs = disc_logit_outputs - dm_star - np.log(1-np.exp(disc_logit_outputs-dm_star-eps))-gamma
             acceptance_probs = 1./(1+np.exp(-fs))
-            print('acceptance probs:', acceptance_probs)
             rand = np.random.uniform(size=len(acceptance_probs))
             accept = rand<acceptance_probs
             if np.sum(accept)>0:
@@ -418,7 +497,7 @@ class nbody_dataset():
             counter += 1
             if counter > 100:
                 print('counter overload!!!')
-                return
+                return np.array(gen_samps)
         return np.array(gen_samps)
             
             
