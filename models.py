@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import cPickle as pickle
-
+from helpers import *
 
 # custom weights initialization called on netG and netD
 def weights_init(m):
@@ -190,10 +190,11 @@ class DC_Generator3D(nn.Module):
         return output
 
 class DC_Discriminator3D(nn.Module):
-    def __init__(self, ngpu, nc, ndf, sizes, endact_disc='sigmoid', n_cond_features=0):
+
+    def __init__(self, ngpu, nc, ndf, sizes, device, endact_disc='sigmoid', n_cond_features=0):
         super(DC_Discriminator3D, self).__init__()
         self.ngpu = ngpu
-
+        self.device = device
         layers = []
         first_layer = []
         for i, size in enumerate(np.flip(sizes, 0)):
@@ -215,22 +216,24 @@ class DC_Discriminator3D(nn.Module):
                 layers.append(nn.LeakyReLU(0.2, inplace=True))
             
             outc = ndf*int(size)
-            #layers.append(nn.LeakyReLU(0.2, inplace=True))
 
-        #layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
         if endact_disc == 'sigmoid':
             layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
             layers.append(nn.Sigmoid())
+
         elif endact_disc == 'linear':
             layers.append(nn.Linear(outc, 1))
+
         self.main = nn.Sequential(*layers)
         self.first = nn.Sequential(*first_layer)
 
-    def forward(self, input, cond_features=None):
+    def forward(self, input, cond=None):
         if input.is_cuda and self.ngpu > 1:
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
-            if cond_features is not None:
+            if cond is not None:
+                cond_features = make_feature_maps(cond, output1[0,0,:,:,:].shape, self.device)
                 output1 = torch.cat((output1, cond_features), 1)
+                #print('output1 has shape:', output1.shape)
             output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))
             #output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:  
