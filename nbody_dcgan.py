@@ -45,9 +45,13 @@ sizes = np.array([8,4,2,1])
 #redshift_strings = np.array(['006', '007', '008', '009'])
 redshift_bins = np.array([3., 1.5, 0.5, 0.])
 
-age_bins = cosmo.age(redshift_bins)/cosmo.age(0)
-print('age_bins:', age_bins)
+cond_bins = np.array([[[0.801, 0.28724518], [0.801, 0.3132452],  [0.801, 0.3392452 ]],
+             [[0.829, 0.28724518], [0.829, 0.3132452 ], [0.829, 0.3392452 ]],
+             [[0.857, 0.28724518], [0.857, 0.3132452 ], [0.857, 0.3392452 ]]])
 
+
+
+age_bins = cosmo.age(redshift_bins)/cosmo.age(0)
 
 redshift_strings = np.array(['003', '005','007', '009'])
 #redshift_bins = np.array([5., 3., 1., 0.5, 0.])
@@ -70,6 +74,7 @@ if opt.wgan:
 
 timestr, new_dir, frame_dir, fake_dir = setup_result_directories()
 opt.timestr = timestr
+
 # save metadata of run
 save_params(new_dir, opt)
 
@@ -102,27 +107,39 @@ lossD_vals, lossG_vals = [[], []]
 
 
 class GAN_optimization():
-    def __init__(self, optimizerD, optimizerG, netD, netG):
+    def __init__(self, optimizerD, optimizerG, netD, netG, cond_params=None):
         self.optimizerD = optimizerD
         self.optimizerG = optimizerG
         self.netD = netD
         self.netG = netG
         self.criterion = criterion
+        self.cond_params = cond_params
         if opt.trainSize > 0:
                 self.batchSize = np.minimum(opt.trainSize, opt.batchSize)
         else:
                 self.batchSize = opt.batchSize
 
-    def draw_latent_z(self, latent_dim, device, redshifts=None):
+    def draw_latent_z(self, latent_dim, device, cond_params=None, redshifts=None, fixed_c=None):
         noise = torch.randn(self.batchSize, latent_dim, 1, 1, 1, device=device)
-        if redshifts is not None:
+
+        if self.cond_params is not None:
+            if fixed_c is not None:
+                c = np.repeat([fixed_c], opt.batchSize, axis=0)
+            else:
+                c = np.random.choice(self.cond_params, opt.batchSize)
+            
+            noise = torch.cat((noise, torch.from_numpy(c).float().view(-1,1,1,1,1).to(device)),1)
+            return noise, c
+        return noise, None
+
+#        if redshifts is not None:
             #fake_redshifts = np.random.choice(redshift_bins, opt.batchSize)
-            fake_ages = np.random.choice(age_bins, opt.batchSize)
-            noise = torch.cat((noise, torch.from_numpy(fake_ages).float().view(-1,1,1,1,1).to(device)),1)
+#            fake_ages = np.random.choice(age_bins, opt.batchSize)
+#            noise = torch.cat((noise, torch.from_numpy(fake_ages).float().view(-1,1,1,1,1).to(device)),1)
             #noise = torch.cat((noise, torch.from_numpy(fake_redshifts).float().view(-1,1,1,1,1).to(device)),1)
             #return noise, fake_redshifts
-            return noise, fake_ages
-        return noise
+#            return noise, fake_ages
+#        return noise
 
 
     def get_loss(self, output, opt, label=None):
@@ -132,47 +149,43 @@ class GAN_optimization():
             return self.criterion(output, label)
 
 
-    def discriminator_step(self, real_cpu, disc_opt=False, zs=None):
+    def discriminator_step(self, real_cpu, disc_opt=False, c=None, zs=None):
         self.netD.zero_grad()
 
         # train with real
 
-        label = torch.full((self.batchSize,), real_label, device=device)
-        real_cpu = torch.unsqueeze(real_cpu, 1).float() # reshape for 1 channel images
-        #print('real cpu has len', len(real_cpu))
+        #if zs is not None:
+        #    output = self.netD(real_cpu, cond_features=make_feature_maps(zs, output1shape, device))
+        #else:
+        #    output = self.netD(real_cpu)
         
-        #print('zs at discriminator (should be ages):', zs)
-        if zs is not None:
-            output = self.netD(real_cpu, cond_features=make_feature_maps(zs, output1shape, device))
-        else:
-            output = self.netD(real_cpu)
-            #print('here with output length:', len(output))
-            #print(output)
-        #print(len(output), len(label))
+
+        label = torch.full((self.batchSize,), real_label, device=device)
+        real_cpu = torch.unsqueeze(real_cpu, 1).float() # reshape for 1 channel images                        
+        output = self.netD(real_cpu, cond=c)
         errD_real = self.get_loss(output, opt, label=label)
         errD_real.backward()
         D_x = output.mean().item()
 
         # train with fake
+        #if zs is not None:
+        #    noise, fake_zs = self.draw_latent_z(opt.latent_dim, device, redshifts=zs)
+        #else:
+        #    noise = self.draw_latent_z(opt.latent_dim, device)
 
-        if zs is not None:
-            noise, fake_zs = self.draw_latent_z(opt.latent_dim, device, redshifts=zs)
-        else:
-            noise = self.draw_latent_z(opt.latent_dim, device)
-                                                                                                                                                       
-        #print('fake_zs at discriminator:', fake_zs)
-
+        noise, c = self.draw_latent_z(opt.latent_dim, device)
         fake = self.netG(noise)
         label.fill_(fake_label)
-
-        if zs is not None:
-            output = self.netD(fake.detach(), cond_features=make_feature_maps(fake_zs, output1shape, device))
-        else:
-            output = self.netD(fake.detach())
-        
+        output = self.netD(fake.detach(), cond=c)
         errD_fake = self.get_loss(output, opt, label=label)
         errD_fake.backward()
-        
+
+
+        #if zs is not None:
+        #    output = self.netD(fake.detach(), cond_features=make_feature_maps(fake_zs, output1shape, device))
+        #else:
+        #    output = self.netD(fake.detach())
+                
         # train with gradient penalty
         if opt.wgan:
             if zs is not None:
@@ -193,7 +206,6 @@ class GAN_optimization():
         else:
             errD = errD_real + errD_fake
             if D_G_z1 > 0.2 or disc_opt==True: # might not need this for wgan
-                #print('optimizer step')
                 self.optimizerD.step()
 
         return errD, D_x, D_G_z1, dnorm
@@ -205,26 +217,24 @@ class GAN_optimization():
             return self.criterion(output, label)
 
     def generator_step(self, zs=None):
-        noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, 1, device=device)
         
-        if zs is not None:
-            noise, fake_zs = self.draw_latent_z(opt.latent_dim, device, redshifts=zs)
-        else:
-            noise = self.draw_latent_z(opt.latent_dim, device)
+        noise, c = self.draw_latent_z(opt.latent_dim, device)
         
-        #print('fakezs at gensteep:', fake_zs)
-        #print('zs at gen step should be ages:', zs)
-
-
+        #if zs is not None:
+        #    noise, fake_zs = self.draw_latent_z(opt.latent_dim, device, redshifts=zs)
+        #else:
+        #    noise = self.draw_latent_z(opt.latent_dim, device)
+        
         fake = self.netG(noise)
         label = torch.full((self.batchSize,), real_label, device=device)
         self.netG.zero_grad()
         label.fill_(real_label)  # fake labels are real for generator cost  
-
-        if zs is not None:
-            output = self.netD(fake, cond_features=make_feature_maps(fake_zs, output1shape, device))
-        else:
-            output = self.netD(fake)
+        
+        output = self.netD(fake, cond=c)
+        #if zs is not None:
+        #    output = self.netD(fake, cond_features=make_feature_maps(fake_zs, output1shape, device))
+        #else:
+        #    output = self.netD(fake)
         
         errG = self.get_loss(output, opt, label=label)
         errG.backward()
