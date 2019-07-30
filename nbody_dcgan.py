@@ -108,13 +108,14 @@ lossD_vals, lossG_vals = [[], []]
 
 
 class GAN_optimization():
-    def __init__(self, optimizerD, optimizerG, netD, netG, cond_params=None):
+    def __init__(self, optimizerD, optimizerG, netD, netG, cond_params=None, conds=None):
         self.optimizerD = optimizerD
         self.optimizerG = optimizerG
         self.netD = netD
         self.netG = netG
         self.criterion = criterion
         self.cond_params = np.array(cond_params)
+        self.conds = np.array(conds)
         if opt.trainSize > 0:
                 self.batchSize = np.minimum(opt.trainSize, opt.batchSize)
         else:
@@ -126,8 +127,12 @@ class GAN_optimization():
             if fixed_c is not None:
                 c = np.repeat([fixed_c], opt.batchSize, axis=0)
             else:
-                cidx = np.random.choice(np.arange(len(self.cond_params)), opt.batchSize)
-                c = self.cond_params[cidx]
+                print(self.conds)
+                cidx = np.random.choice(np.arange(len(self.conds)), opt.batchSize)
+                c = self.conds[cidx]
+                print('c:', c)
+                #cidx = np.random.choice(np.arange(len(self.cond_params)), opt.batchSize)
+                #c = self.cond_params[cidx]
             noise = torch.cat((noise, torch.from_numpy(c).float().view(-1,c.shape[1],1,1,1).to(device)),1)
             return noise, c
         return noise, None
@@ -248,7 +253,7 @@ def training_epoch(opt, ganopt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms
 
 if n_cond_params > 0:
     if opt.lcdm > 0:
-        sim_boxes, cparam_list = load_in_omegam_s8_sims(opt)
+        sim_boxes, cparam_list, conds = load_in_omegam_s8_sims(opt)
     else:
         sim_boxes, cparam_list = load_in_simulations(opt)
 else:
@@ -259,7 +264,7 @@ print(len(sim_boxes), 'loaded into memory..')
 print('min/max values:', np.min(sim_boxes), np.max(sim_boxes))
 gnorms, dnorms, lossGs, lossDs = [[] for x in xrange(4)]
 
-ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG, cond_params=cparam_list)
+ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG, cond_params=cparam_list, conds=conds)
 
 
 

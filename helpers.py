@@ -176,7 +176,8 @@ def inverse_loglike_transform(s, a=4):
 
 def load_in_omegam_s8_sims(opt):
     
-
+    omegas = [0.28724518, 0.3132452, 0.3392452]
+    sigma8s = [0.801, 0.829, 0.857]
     omegam_s8_dict = dict({1:[0.801, 0.28724518], 2:[0.801, 0.3132452], 3:[0.801, 0.3392452], \
                            4:[0.829, 0.28724518], 5:[0.829, 0.3132452], 6:[0.829, 0.3392452], \
                            7:[0.857, 0.28724518], 8:[0.857, 0.3132452], 9:[0.857, 0.3392452]})
@@ -186,18 +187,27 @@ def load_in_omegam_s8_sims(opt):
     sim_boxes = []
     length = 512
     cparam_list = []
+    conds = []
     
-    print('loading '+str(nsims)+' sims')
-
     for i in xrange(nsims):
         if opt.lcdm > 0:
             cond = omegam_s8_dict[i+1]
+            # these lines get the conditional codes between -1 and 1
+            cond[0] -= np.mean(sigma8s)
+            cond[0] /= (np.mean(sigma8s)-np.min(sigma8s))
+            cond[1] -= np.mean(omegas)
+            cond[1] /= (np.mean(omegas)-np.min(omegas))
         else:
             cond = []
-        print('cond:', cond)
+    
         if len(opt.redshift_idxs)>0:
-            cond.append(0)
-
+            cond.append(0.)
+            for j, idx in enumerate(opt.redshift_idxs):
+                cond[-1] = opt.redshift_bins[j]
+                condoboi = np.array(cond).copy()
+                conds.append(condoboi)
+        else:
+            conds.append(cond)
         with h5py.File(opt.base_path+'n512_512Mpc_cosmo'+str(i+1)+'_gridpart.h5', 'r') as ofile:
 
             for seed in xrange(opt.nseed):
@@ -215,8 +225,7 @@ def load_in_omegam_s8_sims(opt):
                     sim_boxes, cparam_list = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=cparam_list, cond=cond, loglike_a=opt.loglike_a)
     
     assert len(sim_boxes)==len(cparam_list)
-
-    return sim_boxes, cparam_list
+    return sim_boxes, cparam_list, conds
 
 def load_in_simulations(opt):
     nsims = opt.nsims
