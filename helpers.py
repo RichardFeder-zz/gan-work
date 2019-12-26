@@ -108,6 +108,7 @@ def get_parsed_arguments(dattype):
     parser.add_argument('--trainSize', type=int, default=0, help='size of training dataset, if 0 then use unlimited\
  samples')
     parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
+    parser.add_argument('--df', type=int, default=None, help='degrees of freedom in student-t distribution')
     parser.add_argument('--latent_dim', type=int, default=200, help='size of the latent z vector')
     parser.add_argument('--ngf', type=int, default=32)
     parser.add_argument('--ndf', type=int, default=32)
@@ -117,11 +118,15 @@ def get_parsed_arguments(dattype):
 2')
     parser.add_argument('--b1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
     parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of first order momentum of gradient')
+    parser.add_argument('--acgd', type=bool, default=False, help='enables competitve gradient descent optimizer')
     parser.add_argument('--cuda', type=bool, default=True, help='enables cuda')
     parser.add_argument('--ngpu', type=int, default=4, help='number of GPUs to use')
     parser.add_argument('--netG', default='', help="path to netG (to continue training)")
     parser.add_argument('--netD', default='', help="path to netD (to continue training)")
     parser.add_argument('--manualSeed', type=int, help='manual seed')
+    parser.add_argument('--schedule', type=bool, default=False, help='set to True for learning rate scheduling throughout training')
+    parser.add_argument('--step_size', type=int, default=1000, help='if using LR scheduler, it steps every opt.step_size batches')
+    parser.add_argument('--gamma', type=float, default=0.9, help='learning rate gets decreased by this factor every opt.step_size batches')
     parser.add_argument('--wgan', type=bool, default=False, help='use Wasserstein GAN loss/training')
     parser.add_argument('--grad_lam', type=float, default=1., help='coefficient in gradient peanlty term')
     parser.add_argument('--extra_conv_layers', type=int, default=0, help='number of extra convolutional layers at t\
@@ -130,8 +135,12 @@ he end of generator network, default 0')
         parser.add_argument('--base_path', default='/work/06147/pberger/maverick2/gadget_runs/cosmo1/')
         parser.add_argument('--file_name', default='n512_512Mpc_cosmo1_z0_gridpart.h5')
         parser.add_argument('--datadim', type=int, default=3, help='2 to train on slices, 3 to train on volumes') #not currently functional for 2d                                                                                    
-        parser.add_argument('--loglike_a', type=float, default=4., help='scaling parameter in loglike transformatio\
+        parser.add_argument('--loglike_a', type=float, default=None, help='scaling parameter in loglike transformatio\
 n of data')
+        parser.add_argument('--log_scaling', type=bool, default=False, help='use log scaling from HIGAN paper')
+        parser.add_argument('--piecewise_scaling', type=bool, default=False, help='use piecewise scaling')
+        parser.add_argument('--c', type=float, default=100, help='pivot point for piecewise transformation')
+        parser.add_argument('--xmax', type=float, default=50000, help='maximum value to pin s(xmax)=1 to in piecewise transformation')
         parser.add_argument('--redshift_code', type=bool, default=False, help='determines whether redshift conditio\
 nal information used for cGAN')
         parser.add_argument('--n_genstep', type=int, default=1, help='number of generator steps for each discrimina\
@@ -140,8 +149,7 @@ tor step')
         parser.add_argument('--nsims', type=int, default=32, help='number of simulation boxes to get samples from')
         parser.add_argument('--cubedim', type=int, default=128, help='the height / width of the input image to netw\
 ork')
-        parser.add_argument('--lcdm', type=int, default=0, help='number of conditional parameters to use for traini\
-ng. lcdm=1 --> Omega_m, lcdm=2 --> Omega_m + Sigma8')
+        parser.add_argument('--lcdm', type=int, default=0, help='number of conditional parameters to use for training. lcdm=1 --> Omega_m, lcdm=2 --> Omega_m + Sigma8')
     elif dattype=='grf':
         parser.add_argument('--alpha', type=float, default=-2.0, help='Slope of power law for gaussian random field\
 ')
@@ -239,14 +247,19 @@ def load_in_simulations(opt):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                 for j, idx in enumerate(opt.redshift_idxs):
                     sim = ofile["%3.3d"%(idx)][()].copy()
-                    
                     sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a)
         return np.array(sim_boxes), np.array(zlist)
     else:
-        with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
-            for i in xrange(nsims):
-                sim = ofile['seed'+str(i+1)][()].copy()
+        for i in xrange(nsims):
+            with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
+                print('loading redshift 0')
+                sim = ofile["009"][()].copy()
                 sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a)
+            ofile.close()
+        #with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
+#            for i in xrange(nsims):
+#                sim = ofile['seed'+str(i+1)][()].copy()
+#                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a)
 
         return np.array(sim_boxes)
 
@@ -256,8 +269,26 @@ def loglike_transform(x, a=5):
 def loglike_transform_2(x, k=5.):
     return (1/float(k))*np.log10(x+1)
 
+def log_transform_HI(x, eps=0.01, xmax=20000):
+    return np.log10(x+eps)/np.log10(xmax+eps)
+
+def inverse_log_transform_HI(s, eps=0.01, xmax=20000):
+    return (xmax+eps)**s - eps
+
 def inverse_loglike_transform_2(s, k=5.):
     return 10**(float(k)*s)-1
+
+def piecewise_transform(x, a=20., c=100., xmax=50000):
+    s_c = 2*c/(c+a)-1
+    A = (1.-s_c)/np.log(xmax/c)
+    s = np.piecewise(x, [x<=c, x>c], [lambda x: 2*x/(x+a)-1, lambda x: (2*c/(c+a)-1)+A*(np.log(x/c))])
+    return s
+
+def inverse_piecewise_transform(s, a=20., c=100., xmax=50000):
+    s_c = 2*c/(c+a)-1
+    x = np.piecewise(s, [s<=s_c, s>s_c], [lambda s: a*(s+1)/(1-s), lambda s: c*np.exp(((s-s_c)/(1.-s_c))*np.log(xmax/c))])
+    return x
+
 
 def make_feature_maps(array_vals, featureshape, device):
     feature_maps = torch.from_numpy(np.array([[np.full(featureshape, v) for v in val] for val in array_vals])).to(device)
@@ -311,53 +342,6 @@ def partition_cube(sim, length, cubedim, sim_boxes, cparam_list=None, cond=None,
     else:
         return sim_boxes
 
-def plot_comp_resources(timearray, directory):
-
-    labels = ['Sample Drawing', 'Generator', 'Discriminator + Loss', 'Gradient', 'Backprop/Update']
-    timesum = np.sum(timearray, axis=1)
-
-    plt.figure()
-    plt.pie(timesum, labels=labels, autopct='%1.1f%%', shadow=True)
-    plt.savefig(directory+'/comp_resources.png', bbox_inches='tight')
-    plt.close()
-
-def plot_info_iterations(lossI_vals, directory):
-    n = len(lossI_vals)
-    np.savetxt(directory+'/lossI.txt', lossI_vals)
-    plt.figure()
-    plt.scatter(np.arange(n), lossI_vals, s=2)
-    plt.yscale('log')
-    plt.ylabel('Mutual Information Loss')
-    plt.xlabel('Iteration')
-    plt.savefig(directory+'/loss_I.png', bbox_inches='tight')
-    plt.close()
-
-def plot_loss_iterations(lossD_vals, lossG_vals, directory):
-    n = len(lossD_vals)
-
-    lossG_vals = np.abs(lossG_vals)
-    lossD_vals = np.abs(lossD_vals)
-
-
-    np.savetxt(directory+'/lossG.txt', lossG_vals)
-    np.savetxt(directory+'/lossD.txt', lossD_vals)
-
-    plt.figure(figsize=(8,4))
-    plt.subplot(1,2,1)
-    plt.scatter(np.arange(n), lossD_vals, label='Discriminator', s=2, alpha=0.5)
-    plt.legend()
-    plt.yscale('log')
-    plt.xlabel('Iteration')
-    plt.ylabel('Loss')
-    plt.subplot(1,2,2)
-    plt.scatter(np.arange(n), lossG_vals, label='Generator', s=2, alpha=0.5)
-    plt.xlabel('Iteration')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.yscale('log')
-    plt.savefig(directory+'/loss_GD.png', bbox_inches='tight')
-    plt.close()
-
 def setup_result_directories():
     timestr = time.strftime("%Y%m%d-%H%M%S")
     new_dir, frame_dir = create_directories(timestr)
@@ -390,19 +374,6 @@ def save_params(dir, opt):
         for key in param_dict:
             file2.write(key+': '+str(param_dict[key])+'\n')
     file2.close()
-
-
-def save_frames(fakes, reals, rhos, dir, iter):
-    plt.figure(figsize=(9, 3))
-    for i, rho in enumerate(rhos):
-        plt.subplot(1, len(rhos), i+1)
-        plt.title('Rho = '+str(rho))
-        plt.scatter(fakes[i][:,0], fakes[i][:,1], label='Generator', color='b', alpha=0.5, s=1)
-        plt.scatter(reals[i][:,0], reals[i][:,1], label='Truth', color='r', alpha=0.5, s=1)
-        plt.legend(loc=1)
-    plt.savefig(dir+'/iteration_'+str(iter)+'.png', bbox_inches='tight')
-    plt.close()
-
 
 def sample_noise(bs, d):
     z = torch.randn(bs, d).float()

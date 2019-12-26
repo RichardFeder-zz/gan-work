@@ -125,24 +125,6 @@ def fit_2d_powerspectrum(image, dspace = 1):
     return k, line, power_interp, pspec_size
 
 
-def plot_powerspec_and_field(k, power_interpolation, best_fit, field):
-    pspec_size = field.shape[0]*field.shape[1]
-    print 'size here is ', pspec_size
-    plt.figure(figsize=(10,5))
-    plt.subplot(1,2,1)
-    plt.title('Field')
-    plt.imshow(field.real, interpolation='none')
-    plt.subplot(1,2,2)
-    plt.title('Power Spectrum')
-    plt.plot(k, best_fit(np.log10(k)), color='g', label=best_fit)
-    plt.scatter(k, np.log10(power2DMean(k, power_interpolation, pspec_size)), label='Noise Spec')
-    plt.ylabel('log10(Power)')
-    plt.xlabel('k')
-    plt.xscale('log')
-    plt.xlim(0.9*np.min(k), np.max(k)*1.1)
-    plt.legend()
-    plt.show()
-
 def generate_grf_dataset(nsamp, alpha, size):
     ims = gaussian_random_field(nsamp, alpha, size=size)
     for i, im in enumerate(ims):
