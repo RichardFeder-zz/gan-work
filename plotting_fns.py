@@ -94,40 +94,52 @@ def plot_diag(base_path, timestring, mode='grad_norm', epoch=None, save=False, s
         plt.show()
     return f
 
-def plot_bispectra(k1, k2, genbks=[], thetabins=[], labels=[], realbk=None, realthetabins=[],timestr=None, z=None, title=None):
-    fig = plt.figure(figsize=(8,6))
+
+def plot_bispectra(k1, k2, genbks=[], thetabins=[], labels=[], realbk=None, realthetabins=[],timestr=None, \
+                    z=None, title=None, mode='median', ymin=1.5e5, ymax=1.5e7):
+    fig, (ax) = plt.subplots(1, 1, figsize=(8,6))
+#     plt.subplot(1,2,1)
     colors = ['darkslategrey', 'royalblue','m', 'maroon']
     if realbk is not None:
         plt.fill_between(realthetabins, np.percentile(realbk, 16, axis=0), np.percentile(realbk, 84, axis=0), \
+\
 facecolor='green', alpha=0.4)
         plt.plot(realthetabins, np.median(realbk, axis=0), label='GADGET-2', color='forestgreen', marker='.')
+        plt.plot(realthetabins, np.mean(realbk, axis=0), color='forestgreen', marker='.', linestyle='dashed')
+
         plt.plot(realthetabins, np.percentile(realbk, 16, axis=0), color='forestgreen')
         plt.plot(realthetabins, np.percentile(realbk, 84, axis=0), color='forestgreen')
 
     if len(genbks)>0:
         for i, genbk in enumerate(genbks):
             plt.fill_between(thetabins[i], np.percentile(genbk, 16, axis=0), np.percentile(genbk, 84, axis=0),\
+\
  alpha=0.2, color=colors[i])
             plt.plot(thetabins[i], np.median(genbk, axis=0), label=labels[i], marker='.', color=colors[i])
+            plt.plot(thetabins[i], np.mean(genbk, axis=0), marker='.', color=colors[i], linestyle='dashed')
+
             plt.plot(thetabins[i], np.percentile(genbk, 16, axis=0), linewidth=0.75, color=colors[i])
             plt.plot(thetabins[i],  np.percentile(genbk, 84, axis=0), linewidth=0.75, color=colors[i])
 
 
     plt.legend(loc=1, fontsize=14, frameon=False)
     plt.xlabel('$\\theta$ [radian]', fontsize=14)
-    plt.ylabel('$B(k)$ $[h^{-6} Mpc^6]$', fontsize=14)
+    plt.ylabel('$B(\\theta)$ $[h^{-6} Mpc^6]$', fontsize=14)
     plt.yscale('log')
-    plt.text(0.1, 1.1e7,'$k_1=$'+str(k1), fontsize=16)
-    plt.text(0.1, 8e6,'$k_2=$'+str(k2), fontsize=16)
-    plt.ylim(1.5e5, 1.5e7)
+    plt.ylim(ymin, ymax)
 
+    
+    plt.text(0.1, 10**(np.log10(ymax)-0.2),'$k_1=$'+str(k1), fontsize=16)
+    plt.text(0.1, 10**(np.log10(ymax)-0.35),'$k_2=$'+str(k2), fontsize=16)
+    
+    plt.tight_layout()
     if timestr is not None:
         plt.savefig('figures/gif_dir/'+timestr+'/bispectra_'+str(k1)+'_'+str(k2)+'.pdf', bbox_inches='tight')
     plt.show()
 
     return fig
 
-def plot_powerspectra(genpks=[], genkbins=[], labels=[],realpk=None, realkbins=None, frac=False, timestr=None, z=None, title=None, colors=None):
+def plot_powerspectra(genpks=[], genkbins=[], labels=[],realpk=None, realkbins=None, frac=False, timestr=None, z=None, title=None, colors=None, mode='median'):
 
     if title is None:
         title = 'Comparison of power spectra with 1$\\sigma$ shaded regions'
@@ -142,7 +154,10 @@ def plot_powerspectra(genpks=[], genkbins=[], labels=[],realpk=None, realkbins=N
     if realpk is not None:
         ax.fill_between(realkbins, np.percentile(realpk, 16, axis=0), np.percentile(realpk, 84, axis=0), facecolor='green', alpha=\
 0.4)
-        ax.plot(realkbins, np.median(realpk, axis=0), label='GADGET-2', color='forestgreen', marker='.')
+        if mode=='median':
+            ax.plot(realkbins, np.median(realpk, axis=0), label='GADGET-2', color='forestgreen', marker='.')
+        elif mode=='mean':
+            ax.plot(realkbins, np.mean(realpk, axis=0), label='GADGET-2', color='forestgreen', marker='.')
         ax.plot(realkbins, np.percentile(realpk, 16, axis=0), color='forestgreen')
         ax.plot(realkbins, np.percentile(realpk, 84, axis=0), color='forestgreen')
 
@@ -152,7 +167,10 @@ def plot_powerspectra(genpks=[], genkbins=[], labels=[],realpk=None, realkbins=N
             print(colors[i])
             print(labels[i])
             ax.fill_between(genkbins[i], np.percentile(genpk, 16, axis=0), np.percentile(genpk, 84, axis=0), alpha=0.2, color=colors[i])
-            ax.plot(genkbins[i], np.median(genpk, axis=0), label=labels[i], marker='.', color=colors[i])
+            if mode=='median':
+                ax.plot(genkbins[i], np.median(genpk, axis=0), label=labels[i], marker='.', color=colors[i])
+            elif mode=='mean':
+                ax.plot(genkbins[i], np.mean(genpk, axis=0), label=labels[i], marker='.', color=colors[i])
             ax.plot(genkbins[i], np.percentile(genpk, 16, axis=0), linewidth=1., color=colors[i])
             ax.plot(genkbins[i],  np.percentile(genpk, 84, axis=0), linewidth=1., color=colors[i])
 
@@ -185,31 +203,31 @@ def plot_powerspectra(genpks=[], genkbins=[], labels=[],realpk=None, realkbins=N
 
     return fig
 
-def plot_voxel_pdf(real_vols=None, gen_vols=None, nbins=49, mode='scaled', timestr=None, epoch=None, gen_vols2=None, reallabel='GADGET-2', genlabel='GAN', gen2label=None, show=True):
+def plot_voxel_pdf(real_vols=None, gen_vols=None, nbins=49, mode='scaled', timestr=None, epoch=None, gen_vols2=None, reallabel='GADGET-2', genlabel='GAN', gen2label=None, show=True, capsize=5):
     f = plt.figure(figsize=(8,6))
     if mode=='scaled':
         bins = np.linspace(-1, 1, 50)
     else:
         bins = 10**(np.linspace(-4, 4, 50))
     midbins = 0.5*(bins[1:]+bins[:-1])
-        
+
     if real_vols is not None:
-            
+
         voxel_hists = np.array([np.histogram(real_vols[i], bins=bins)[0] for i in range(real_vols.shape[0])])
         print(np.mean(voxel_hists, axis=0).shape)
-        plt.errorbar(midbins, np.mean(voxel_hists, axis=0)/real_vols.shape[0], yerr=np.std(voxel_hists, axis=0)/real_vols.shape[0], label=reallabel, color='g')
+        plt.errorbar(midbins, np.mean(voxel_hists, axis=0)/real_vols.shape[0], yerr=np.std(voxel_hists, axis=0)/real_vols.shape[0], label=reallabel, color='g', capsize=capsize)
         maxval = np.max(real_vols[0])
     if gen_vols is not None:
         if real_vols is not None:
             binz = bins
         else:
-                binz = nbins
+            binz = nbins
         gen_voxel_hists = np.array([np.histogram(gen_vols[i], bins=bins)[0] for i in range(gen_vols.shape[0])])
-        plt.errorbar(midbins, np.mean(gen_voxel_hists, axis=0)/gen_vols.shape[0], yerr=np.std(gen_voxel_hists, axis=0)/gen_vols.shape[0], label=genlabel, color='b')
+        plt.errorbar(midbins, np.mean(gen_voxel_hists, axis=0)/gen_vols.shape[0], yerr=np.std(gen_voxel_hists, axis=0)/gen_vols.shape[0], label=genlabel, color='b', capsize=capsize)
         maxval = np.max(gen_vols[0])
         if gen_vols2 is not None:
             gen2_voxel_hists = np.array([np.histogram(gen_vols2[i], bins=bins)[0] for i in range(gen_vols2.shape[0])])
-            plt.errorbar(midbins, np.mean(gen2_voxel_hists, axis=0)/gen_vols2.shape[0], yerr=np.std(gen2_voxel_hists, axis=0)/gen_vols2.shape[0], label=gen2label, color='b')
+            plt.errorbar(midbins, np.mean(gen2_voxel_hists, axis=0)/gen_vols2.shape[0], yerr=np.std(gen2_voxel_hists, axis=0)/gen_vols2.shape[0], label=gen2label, color='b', capsize=capsize)
 
     plt.yscale('log')
     if mode=='scaled':
@@ -221,18 +239,16 @@ def plot_voxel_pdf(real_vols=None, gen_vols=None, nbins=49, mode='scaled', times
     plt.legend(fontsize=14, frameon=False)
     plt.ylabel('Normalized Counts', fontsize=14)
     if timestr is not None:
-        plt.savefig('figures/gif_dir/'+timestr+'/voxel_pdf_epoch'+str(epoch)+'.pdf', bbox_inches='tight'\
-)
+        plt.savefig('figures/gif_dir/'+timestr+'/voxel_pdf_epoch'+str(epoch)+'.pdf', bbox_inches='tight')
     if show:
         plt.show()
-        
-    return f
 
+    return f
 
 def plot_corr_cov_matrices(real, gen, mode='cov', \
                            real_title = 'GADGET-2 Simulations', \
                            gen_title='GAN Samples', \
-                           vmin=None, vmax=None, show=True):
+                           vmin=None, vmax=None, show=True, kbins=None):
     if mode=='cov':
         ylabel='Covariance'
         ylabel2 = 'Fractional Difference'
@@ -252,39 +268,59 @@ def plot_corr_cov_matrices(real, gen, mode='cov', \
             vmin = 0.5
         if vmax is None:
             vmax = 0.2
-        
+            
+    tick_spaces = np.array([0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 2.0, 3.0, 4.0])
+    tick_labels = np.array(['', '', '', '','','','','', '1.0', '','',''])
+
     f = plt.figure(figsize=(15, 4))
     ax = plt.subplot(1,3,1)
     plt.title(real_title, fontsize=14)
-
-    plt.imshow(imreal, vmin=vmin)
+    plt.imshow(imreal, vmin=vmin, extent=[np.log10(kbins[0]), np.log10(kbins[-1]), np.log10(kbins[-1]), np.log10(kbins[0])])
     plt.colorbar()
-    plt.tick_params(axis='both', bottom=False, left=False)
-    ax.set_yticklabels([])
-    ax.set_xticklabels([''])
+    plt.tick_params(axis='both', bottom=True, left=True)
+
+
+    ax.set_yticks(np.log10(tick_spaces))
+    ax.set_yticklabels(tick_labels)
+    ax.set_xticks(np.log10(tick_spaces))
+    ax.set_xticklabels(tick_labels)
+    
+    ax.set_xlabel('$k$ [$h$ Mpc$^{-1}$]', fontsize=14)
     ax.set_ylabel(ylabel, fontsize=30)
+
+    
     ax = plt.subplot(1,3,2)
     plt.title(gen_title, fontsize=14)
-    plt.imshow(imgen, vmin=vmin)
+    plt.imshow(imgen, vmin=vmin, extent=[np.log10(kbins[0]), np.log10(kbins[-1]), np.log10(kbins[-1]), np.log10(kbins[0])])
     plt.colorbar()
-    plt.tick_params(axis='both', bottom=False, left=False)
-    ax.set_yticklabels([])
-    ax.set_xticklabels([])
+    plt.tick_params(axis='both', bottom=True, left=True)
+
+    ax.set_yticks(np.log10(tick_spaces))
+    ax.set_yticklabels(tick_labels)
+    ax.set_xticks(np.log10(tick_spaces))
+    ax.set_xticklabels(tick_labels)
+    ax.set_xlabel('$k$ [$h$ Mpc$^{-1}$]', fontsize=14)
+
     ax = plt.subplot(1,3,3)
+    
     plt.title(ylabel2, fontsize=14)
-    
-    plt.imshow(diff, vmax=vmax)
+
+    plt.imshow(diff, vmax=vmax, extent=[np.log10(kbins[0]), np.log10(kbins[-1]), np.log10(kbins[-1]), np.log10(kbins[0])])
     plt.colorbar()
-    plt.tick_params(axis='both', bottom=False, left=False)
-    ax.set_yticklabels([])
-    ax.set_xticklabels([])
+    plt.tick_params(axis='both', bottom=True, left=True)
+
+    ax.set_yticks(np.log10(tick_spaces))
+    ax.set_yticklabels(tick_labels)
+    ax.set_xticks(np.log10(tick_spaces))
+    ax.set_xticklabels(tick_labels)
+    ax.set_xlabel('$k$ [$h$ Mpc$^{-1}$]', fontsize=14)
+
     plt.tight_layout()
-    
+
     if show:
         plt.show()
-    
-    return f
 
+    return f
 
 def plot_comp_resources(timearray, directory):
 
@@ -390,3 +426,44 @@ def plot_powerspec_and_field(k, power_interpolation, best_fit, field):
     plt.xlim(0.9*np.min(k), np.max(k)*1.1)
     plt.legend()
     plt.show()
+
+def plot_data_scalings(mode='loglike', a_range=[1, 4, 10, 50], eps=None, lin=None, show=True, cmap=None):
+    colors = cmap
+    if cmap is None:
+        colors = plt.cm.YlGnBu(np.linspace(0.5,1.0,len(a_range)))
+        
+    f = plt.figure()
+    if mode=='loglike':
+        plt.title('Loglike scaling $s(x)=\\frac{2x}{x+a}-1$', fontsize=14)
+        for i, a in enumerate(a_range):
+            plt.plot(lin, loglike_transform(lin, a=a), label='a='+str(a), color=colors[i])
+    elif mode=='higan':
+        plt.title('Log scaling $s(x) = \\frac{\\log_{10} x + \\epsilon}{\\log_{10} x_{max} + \\epsilon}')
+        for e in eps:
+            plt.plot(log_transform_HI(lin, eps=e), lin, label=str(e))
+
+    plt.legend()
+    plt.xscale('log')
+    plt.ylabel('Scaled density s(x)', fontsize=14)
+    plt.xlabel('Matter density x', fontsize=14)
+
+    if show:
+        plt.show()
+
+    return f
+
+def plot_average_density_hist(avmass_real=None, avmass_gen=None, show=True, alpha_real=0.8, alpha_gen=0.8):
+    bins = None
+    f = plt.figure()
+    if avmass_real is not None:
+        _, bins, _ = plt.hist(np.log10(avmass), bins=20, label='GADGET-2', color='forestgreen',alpha=alpha_real, density=True)
+    if avmass_gen is not None:
+        if bins is None:
+            bins = 20
+        plt.hist(np.log10(avmass_gen), bins=bins, label='GAN', color='royalblue', alpha=alpha_gen, density=True)
+    plt.xlabel('$\\log_{10}(\overline{\\rho})$', fontsize=14)
+    plt.legend(fontsize=14, frameon=False)
+    plt.ylabel('Probablility Density', fontsize=14)
+    if show:
+        plt.show()
+    return f

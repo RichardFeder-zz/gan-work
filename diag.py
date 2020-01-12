@@ -103,8 +103,6 @@ class nbody_dataset():
         if redshift is not None:
             z[:,-1] = redshift
 
-        #print(z[:,-1])                                                                     
-
         gensamps = generator(z)
         if redshift is not None:
             discriminator_outs = discriminator(gensamps, cond_features=make_feature_maps(z[\
@@ -152,7 +150,6 @@ eps))-gamma
 
     def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None, discriminator=None, sigma=1, df=None):
         if df is not None:
-            #print('Sampling from Student-t distribution')
             z = sigma*torch.distributions.StudentT(scale=sigma,df=df).rsample(sample_shape=(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1)).float().to(self.device)
         else:
             z = sigma*torch.randn(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
@@ -167,7 +164,7 @@ eps))-gamma
             return gensamps.detach().numpy(), disc_outputs.detach().numpy()
         return gensamps.cpu().detach().numpy()
 
-    def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None, idxs=None):
+    def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None, idxs=None, ds_factor=1):
         
         if idxs is not None:
             simrange = idxs
@@ -187,7 +184,7 @@ eps))-gamma
                 print(i)
                 with h5py.File(self.data_path + self.name_base + str(i+1)+'_gridpart.h5', 'r') as ofile:
                     sim = ofile["009"][()]
-                    self.datasims = partition_cube(sim, self.length, self.cubedim, self.datasims, loglike_a=loglike_a)
+                    self.datasims = partition_cube(sim, self.length, self.cubedim, self.datasims, loglike_a=loglike_a, ds_factor=ds_factor)
                 ofile.close()
 
         else:
@@ -197,7 +194,7 @@ eps))-gamma
                     for idx in redshift_idxs:
                         print(idx, self.redshift_bins[idx])
                         sim = ofile['%3.3d'%(idx)][()].to(device)
-                        self.datasims, self.zlist = partition_cube(sim, self.length, self.cubedim, self.datasims, cparam_list=self.zlist, z=self.redshift_bins[idx],loglike_a=loglike_a)
+                        self.datasims, self.zlist = partition_cube(sim, self.length, self.cubedim, self.datasims, cparam_list=self.zlist, z=self.redshift_bins[idx],loglike_a=loglike_a, ds_factor=ds_factor)
                 ofile.close()
                 
 
@@ -255,7 +252,6 @@ eps))-gamma
                 pk, kbins = self.compute_power_spectra(gen_samps, inverse_loglike_a=loglike_a)
 
             else:
-                #print('index is ', int(self.z_idx_dict[zed]))
                 self.datasims = []
                 self.load_in_sims(1, loglike_a=loglike_a, redshift_idxs=[int(self.z_idx_dict[zs[i]])])
                 print(len(self.datasims))
@@ -347,7 +343,6 @@ def find_best_epoch(timestr, nsamp=200, epochs=None, k1 = 0.2, k2 = 0.3, ncond=0
         gen_samps = nbody.get_samples(gen, nsamp, pdict, n_conditional=ncond)
         print(inverse_loglike_transform(np.mean(gen_samps[gen_samps>np.percentile(gen_samps, 99.9995)]), loglike_a))
         gen_samps *= -1.0
-        #gen_samps[gen_samps>np.percentile(gen_samps, 99.9995)] *= 0.5
         true_gen_samps = inverse_loglike_transform(gen_samps, loglike_a)
         
         pk, kbin = compute_power_spectra(true_gen_samps, unsqueeze=True)

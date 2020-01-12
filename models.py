@@ -144,13 +144,11 @@ class DC_Discriminator(nn.Module):
         else:
             return output.view(-1, 1).squeeze(1)
 
-
 class DC_Generator3D(nn.Module):
     def __init__(self, ngpu, nc, nz, ngf, sizes, extra_conv_layers=0, endact='tanh'):
         super(DC_Generator3D, self).__init__()
         self.ngpu = ngpu
         layers = []
-
         kernel_sizes = [4, 4, 4, 4]
         strides = [1, 2, 2, 2]
         paddings = [0, 1, 1, 1]
@@ -160,22 +158,51 @@ class DC_Generator3D(nn.Module):
                 layers.append(nn.ConvTranspose3d(nz, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
             else:
                 layers.append(nn.ConvTranspose3d(outc, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
-            #if i==0:
-            #    layers.append(nn.ConvTranspose3d(nz, ngf*int(size), 4, stride=1, padding=0, bias=False))
-            #else:
-            #    layers.append(nn.ConvTranspose3d(outc, ngf*int(size), 4, stride=2, padding=1, bias=False))
-                #layers.append(nn.ConvTranspose3d(outc, ngf*int(size), 2, stride=2, padding=0, bias=False))            
+         
             outc = ngf*int(size)
             layers.append(nn.BatchNorm3d(outc))
             layers.append(nn.ReLU(True))
+            
 
+
+        #layers.append(nn.Conv3d(outc, outc, 3, stride=1, padding=1, bias=False))
+        #layers.append(nn.BatchNorm3d(outc))
+        #layers.append(nn.ReLU(True))
+        #layers.append(nn.ConvTranspose3d(outc, nc, 2, stride=2, padding=1, bias=False))
+
+        # 4x4x4 filter to get to final size
+        layers.append(nn.ConvTranspose3d(outc, outc, 4, stride=2, padding=1, bias=False))
+        layers.append(nn.BatchNorm3d(outc))
+        layers.append(nn.ReLU(True))
+        # 3x3x3 filters at final size, multiple channels 
+        layers.append(nn.Conv3d(outc, outc, 3, stride=1, padding=1, bias=False))
+        layers.append(nn.BatchNorm3d(outc))
+        layers.append(nn.ReLU(True))
+        # gets us to one channel
+        layers.append(nn.Conv3d(outc, nc, 3, stride=1, padding=1, bias=False))
+        #layers.append(nn.BatchNorm3d(nc))
+        #layers.append(nn.ReLU(True))
+        #layers.append(nn.Conv3d(nc, nc, 3, stride=1, padding=1, bias=False))
+        
+
+        # 4x4x4 filter to get to final size and from 32 to 1 channel 
+        #layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
+        #layers.append(nn.BatchNorm3d(nc))
+        # single 3x3x3 convolutional filter and non-linearity
+        #layers.append(nn.ReLU(True))
+        #layers.append(nn.Conv3d(nc, nc, 3, stride=1, padding=1, bias=False))
+        
+#        layers.append(nn.ReLU(True))
+#        layers.append(nn.Conv3d(nc, nc, 2, stride=1, padding=1, bias=False))
+        
         for i in xrange(extra_conv_layers):
             layers.append(nn.ConvTranspose3d(outc, outc, 3, stride=1, padding=1, bias=False)) # extra layer
             layers.append(nn.BatchNorm3d(outc))
             layers.append(nn.ReLU(True))
 
-        layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
+        #layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
         #layers.append(nn.ConvTranspose3d(outc, nc, 2, stride=2, padding=0, bias=False))
+        
         if endact=='tanh': 
             layers.append(nn.Tanh())
         elif endact=='softplus':
@@ -197,13 +224,21 @@ class DC_Discriminator3D(nn.Module):
         self.device = device
         layers = []
         first_layer = []
+
+        first_layer.append(nn.Conv3d(nc, ndf*int(sizes[-1]), 3, stride=1, padding=1, bias=False))
+        first_layer.append(nn.LeakyReLU(0.2, inplace=True))
         for i, size in enumerate(np.flip(sizes, 0)):
 
             if i==0:
-                first_layer.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
-                #first_layer.append(nn.Conv3d(ndf*int(size), ndf*int(size), 3, stride=1, padding=1, bias=False)) # extra layer
-                #layers.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
-                #layers.append(nn.LeakyReLU(0.2, inplace=True))
+                
+                # remove these three lines to make discriminator slightly less powerful
+                #first_layer.append(nn.Conv3d(ndf*int(size), ndf*int(size), 3, stride=1, padding=1, bias=False))
+                #first_layer.append(nn.BatchNorm3d(ndf*int(size)))
+                #first_layer.append(nn.LeakyReLU(0.2, inplace=True))
+
+                first_layer.append(nn.Conv3d(ndf*int(size), ndf*int(size), 4, stride=2, padding=1, bias=False))
+                #first_layer.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
+                first_layer.append(nn.BatchNorm3d(ndf*int(size)))
                 first_layer.append(nn.LeakyReLU(0.2, inplace=True))
             # if there are conditional parameters this will accommoate an extra feature map 
             elif i==1:
@@ -230,14 +265,101 @@ class DC_Discriminator3D(nn.Module):
     def forward(self, input, cond=None):
         if input.is_cuda and self.ngpu > 1:
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
+
             if cond is not None:
                 cond_features = make_feature_maps(cond, output1[0,0,:,:,:].shape, self.device)
                 output1 = torch.cat((output1, cond_features), 1)
-                #print('output1 has shape:', output1.shape)
+            output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))
+        else:  
+            output1 = self.first(input)
+            output = self.main(output1)
+        return output.view(-1, 1).squeeze(1)
+
+
+class DC_Generator3D_simpler(nn.Module):
+    def __init__(self, ngpu, nc, nz, ngf, sizes, extra_conv_layers=0, endact='tanh'):
+        super(DC_Generator3D_simpler, self).__init__()
+        self.ngpu = ngpu
+        layers = []
+
+        kernel_sizes = [4, 4, 4, 4]
+        strides = [1, 2, 2, 2]
+        paddings = [0, 1, 1, 1]
+        
+        for i, size in enumerate(sizes):
+            if i==0:
+                layers.append(nn.ConvTranspose3d(nz, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
+            else:
+                layers.append(nn.ConvTranspose3d(outc, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
+            outc = ngf*int(size)
+            layers.append(nn.BatchNorm3d(outc))
+            layers.append(nn.ReLU(True))
+
+        for i in xrange(extra_conv_layers):
+            layers.append(nn.ConvTranspose3d(outc, outc, 3, stride=1, padding=1, bias=False)) # extra layer
+            layers.append(nn.BatchNorm3d(outc))
+            layers.append(nn.ReLU(True))
+
+        layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
+        #layers.append(nn.ConvTranspose3d(outc, nc, 2, stride=2, padding=0, bias=False))
+        if endact=='tanh': 
+            layers.append(nn.Tanh())
+        elif endact=='softplus':
+            layers.append(nn.Softplus())
+        self.main = nn.Sequential(*layers)
+
+    def forward(self, input):
+        if input.is_cuda and self.ngpu > 1:
+            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+        else:
+            output = self.main(input)
+        return output
+
+class DC_Discriminator3D_simpler(nn.Module):
+    def __init__(self, ngpu, nc, ndf, sizes, device, endact_disc='sigmoid', n_cond_features=0):
+        super(DC_Discriminator3D_simpler, self).__init__()
+        self.ngpu = ngpu
+        self.device = device
+        layers = []
+        first_layer = []
+        for i, size in enumerate(np.flip(sizes, 0)):
+
+            if i==0:
+                first_layer.append(nn.Conv3d(nc, ndf*int(size), 4, stride=2, padding=1, bias=False))
+                first_layer.append(nn.LeakyReLU(0.2, inplace=True))
+            # if there are conditional parameters this will accommoate an extra feature map 
+            elif i==1:
+                layers.append(nn.Conv3d(outc+n_cond_features, ndf*int(size), 4, stride=2, padding=1, bias=False))
+                layers.append(nn.BatchNorm3d(ndf*int(size)))
+                layers.append(nn.LeakyReLU(0.2, inplace=True))
+            else:
+                layers.append(nn.Conv3d(outc, ndf*int(size), 4, stride=2, padding=1, bias=False))
+                layers.append(nn.BatchNorm3d(ndf*int(size)))
+                layers.append(nn.LeakyReLU(0.2, inplace=True))
+            
+            outc = ndf*int(size)
+            #layers.append(nn.LeakyReLU(0.2, inplace=True))
+
+        #layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
+        if endact_disc == 'sigmoid':
+            layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
+            layers.append(nn.Sigmoid())
+        elif endact_disc == 'linear':
+            layers.append(nn.Linear(outc*4*4*4, 1))
+        self.main = nn.Sequential(*layers)
+        self.first = nn.Sequential(*first_layer)
+
+    def forward(self, input, cond=None):
+        if input.is_cuda and self.ngpu > 1:
+            output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
+            if cond is not None:
+                cond_features = make_feature_maps(cond, output1[0,0,:,:,:].shape, self.device)
+                output1 = torch.cat((output1, cond_features), 1)
             output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))
             #output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:  
             output1 = self.first(input)
             #output = self.main(input)
             output = self.main(output1)
+
         return output.view(-1, 1).squeeze(1)

@@ -149,6 +149,7 @@ tor step')
         parser.add_argument('--nsims', type=int, default=32, help='number of simulation boxes to get samples from')
         parser.add_argument('--cubedim', type=int, default=128, help='the height / width of the input image to netw\
 ork')
+        parser.add_argument('--ds_factor', type=int, default=1, help='specify if downsampling data for coarser resolution')
         parser.add_argument('--lcdm', type=int, default=0, help='number of conditional parameters to use for training. lcdm=1 --> Omega_m, lcdm=2 --> Omega_m + Sigma8')
     elif dattype=='grf':
         parser.add_argument('--alpha', type=float, default=-2.0, help='Slope of power law for gaussian random field\
@@ -244,17 +245,18 @@ def load_in_simulations(opt):
         zlist = [] # array storing the redshift slice of a given volume in sim_boxes                               \
                                                                                                                     
         for i in xrange(nsims):
+            print('loading sim ', i, 'of ', nsims)
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                 for j, idx in enumerate(opt.redshift_idxs):
                     sim = ofile["%3.3d"%(idx)][()].copy()
-                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a)
+                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor)
         return np.array(sim_boxes), np.array(zlist)
     else:
         for i in xrange(nsims):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                 print('loading redshift 0')
                 sim = ofile["009"][()].copy()
-                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a)
+                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a, ds_factor=opt.ds_factor)
             ofile.close()
         #with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
 #            for i in xrange(nsims):
@@ -271,6 +273,12 @@ def loglike_transform_2(x, k=5.):
 
 def log_transform_HI(x, eps=0.01, xmax=20000):
     return np.log10(x+eps)/np.log10(xmax+eps)
+
+def model_weight_norm(model):
+    totalnorm = 0.
+    for x in model.parameters():
+        totalnorm += x.norm(2)
+    return totalnorm.item()
 
 def inverse_log_transform_HI(s, eps=0.01, xmax=20000):
     return (xmax+eps)**s - eps
@@ -291,10 +299,10 @@ def inverse_piecewise_transform(s, a=20., c=100., xmax=50000):
 
 
 def make_feature_maps(array_vals, featureshape, device):
-    feature_maps = torch.from_numpy(np.array([[np.full(featureshape, v) for v in val] for val in array_vals])).to(device)
-    #feature_maps = torch.from_numpy(np.array([np.full(featureshape, val) for val in array_vals])).to(device)
-    #return torch.unsqueeze(feature_maps, 1).float()
-    return feature_maps.float()
+    #feature_maps = torch.from_numpy(np.array([[np.full(featureshape, v) for v in val] for val in array_vals])).to(device)
+    feature_maps = torch.from_numpy(np.array([np.full(featureshape, val) for val in array_vals])).to(device)
+    return torch.unsqueeze(feature_maps, 1).float()
+    #return feature_maps.float()
 
 def make_gif(dir):
     images = []
@@ -325,16 +333,22 @@ def objective_gan(fakeD, realD):
                       torch.zeros(realD.size(0), 1) + 1e-3))
     return bce(torch.cat((fakeD, realD)), Variable(labD))
 
-def partition_cube(sim, length, cubedim, sim_boxes, cparam_list=None, cond=None, loglike_a=None):
+def partition_cube(sim, length, cubedim, sim_boxes, cparam_list=None, cond=None, loglike_a=None, ds_factor=1):
     for x in xrange(int(length/cubedim)):
         for y in xrange(int(length/cubedim)):
             for r in xrange(int(length/cubedim)):
                 if loglike_a is None:
-                    sim_boxes.append(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim]\
+                    if ds_factor != 1:
+                        sim_boxes.append(blockwise_average_3D(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], [ds_factor, ds_factor, ds_factor]))
+                    else:
+                        sim_boxes.append(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim]\
 \
 )
                 else:
-                    sim_boxes.append(loglike_transform(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], a=loglike_a))
+                    if ds_factor != 1:
+                        sim_boxes.append(loglike_transform(blockwise_average_3D(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], [ds_factor, ds_factor, ds_factor])))
+                    else:
+                        sim_boxes.append(loglike_transform(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], a=loglike_a))
                 if cparam_list is not None:
                     cparam_list.append(cond)
     if cparam_list is not None:
@@ -349,9 +363,13 @@ def setup_result_directories():
     os.makedirs(fake_dir)
     return timestr, new_dir, frame_dir, fake_dir
 
-def save_current_state(ganopt, epoch, new_dir, gnorms, dnorms, lossGs, lossDs):
+def save_current_state(ganopt, epoch, new_dir, gnorms, dnorms, lossGs, lossDs, weightG, weightD):
     save_nn(ganopt.netG, new_dir+'/netG_epoch_'+str(epoch))
     save_nn(ganopt.netD, new_dir+'/netD_epoch_'+str(epoch))
+
+    np.savetxt(new_dir+'/generator_weight_norm_epoch_'+str(epoch)+'.txt', np.array(weightG))
+    np.savetxt(new_dir+'/discriminator_weight_norm_epoch_'+str(epoch)+'.txt', np.array(weightD))
+
 
     np.savetxt(new_dir+'/generator_grad_norm_epoch_'+str(epoch)+'.txt',np.array(gnorms))
     np.savetxt(new_dir+'/discriminator_grad_norm_epoch_'+str(epoch)+'.txt',np.array(dnorms))
@@ -379,3 +397,17 @@ def sample_noise(bs, d):
     z = torch.randn(bs, d).float()
     return Variable(z.to(Device), requires_grad=True)
 
+def weight_norm_vs_epoch(timestr):
+    
+    # first look at parameters and find how many epochs there are
+    i = 0
+    gen, pdict = nbody.restore_generator(timestr, epoch=0, n_condparam=ncond, discriminator=False, extra_conv_layers=0)
+    n_epochs = pdict['n_epochs']
+    norms = np.zeros(shape=(n_epochs,))
+    
+    for i in range(n_epochs):
+        with HiddenPrints():
+            gen, pdict = nbody.restore_generator(timestr, epoch=i, n_condparam=ncond, discriminator=False, extra_conv_layers=0)
+            norms[i] = model_weight_norm(gen)
+        
+    return norms
