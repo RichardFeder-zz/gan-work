@@ -338,9 +338,7 @@ class DC_Discriminator3D_simpler(nn.Module):
                 layers.append(nn.LeakyReLU(0.2, inplace=True))
             
             outc = ndf*int(size)
-            #layers.append(nn.LeakyReLU(0.2, inplace=True))
-
-        #layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
+        
         if endact_disc == 'sigmoid':
             layers.append(nn.Conv3d(outc, 1, 4, stride=1, padding=0, bias=False))
             layers.append(nn.Sigmoid())
@@ -354,12 +352,12 @@ class DC_Discriminator3D_simpler(nn.Module):
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
             if cond is not None:
                 cond_features = make_feature_maps(cond, output1[0,0,:,:,:].shape, self.device)
+                #print(torch.max(cond_features), torch.min(cond_features))
                 output1 = torch.cat((output1, cond_features), 1)
             output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))
-            #output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+            
         else:  
             output1 = self.first(input)
-            #output = self.main(input)
             output = self.main(output1)
 
         return output.view(-1, 1).squeeze(1)

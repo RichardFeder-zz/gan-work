@@ -164,7 +164,7 @@ eps))-gamma
             return gensamps.detach().numpy(), disc_outputs.detach().numpy()
         return gensamps.cpu().detach().numpy()
 
-    def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None, idxs=None, ds_factor=1):
+    def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None, idxs=None, ds_factor=1, fac=1):
         
         if idxs is not None:
             simrange = idxs
@@ -184,7 +184,7 @@ eps))-gamma
                 print(i)
                 with h5py.File(self.data_path + self.name_base + str(i+1)+'_gridpart.h5', 'r') as ofile:
                     sim = ofile["009"][()]
-                    self.datasims = partition_cube(sim, self.length, self.cubedim, self.datasims, loglike_a=loglike_a, ds_factor=ds_factor)
+                    self.datasims = partition_cube(sim, self.length, self.cubedim, self.datasims, loglike_a=loglike_a, ds_factor=ds_factor, fac=fac)
                 ofile.close()
 
         else:
@@ -193,8 +193,8 @@ eps))-gamma
                 with h5py.File(self.data_path + self.name_base + str(i+1)+'_gridpart.h5', 'r') as ofile:
                     for idx in redshift_idxs:
                         print(idx, self.redshift_bins[idx])
-                        sim = ofile['%3.3d'%(idx)][()].to(device)
-                        self.datasims, self.zlist = partition_cube(sim, self.length, self.cubedim, self.datasims, cparam_list=self.zlist, z=self.redshift_bins[idx],loglike_a=loglike_a, ds_factor=ds_factor)
+                        sim = ofile['%3.3d'%(idx)][()]
+                        self.datasims, self.zlist = partition_cube(sim, self.length, self.cubedim, self.datasims, cparam_list=self.zlist, loglike_a=loglike_a, ds_factor=ds_factor, fac=fac)
                 ofile.close()
                 
 

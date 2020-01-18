@@ -31,11 +31,11 @@ outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2,
 
 Device = 'cpu'
 
-def blockwise_average_3D(A,S):
+def blockwise_average_3D(A,S, fac=1):
     # A is the 3D input array                                                                                       
     # S is the blocksize on which averaging is to be performed                                                      
     m,n,r = np.array(A.shape)//S
-    return A.reshape(m,S[0],n,S[1],r,S[2]).mean((1,3,5))
+    return fac*A.reshape(m,S[0],n,S[1],r,S[2]).mean((1,3,5))
 
 
 def calc_gradient_penalty(netD, opt, real_data, fake_data, realz_feat=None, fakez_feat=None):
@@ -126,15 +126,18 @@ def get_parsed_arguments(dattype):
     parser.add_argument('--manualSeed', type=int, help='manual seed')
     parser.add_argument('--schedule', type=bool, default=False, help='set to True for learning rate scheduling throughout training')
     parser.add_argument('--step_size', type=int, default=1000, help='if using LR scheduler, it steps every opt.step_size batches')
-    parser.add_argument('--gamma', type=float, default=0.9, help='learning rate gets decreased by this factor every opt.step_size batches')
+    parser.add_argument('--gamma', type=float, default=1.0, help='learning rate gets decreased by this factor every opt.step_size batches')
+    parser.add_argument('--save_frac', type=int, default=1, help='save one of save_frac models')
     parser.add_argument('--wgan', type=bool, default=False, help='use Wasserstein GAN loss/training')
     parser.add_argument('--grad_lam', type=float, default=1., help='coefficient in gradient peanlty term')
     parser.add_argument('--extra_conv_layers', type=int, default=0, help='number of extra convolutional layers at t\
 he end of generator network, default 0')
+    parser.add_argument('--cond_scale_fac', type=float, default=1.0, help='scale factor for conditional information')
     if dattype=='nbody':
         parser.add_argument('--base_path', default='/work/06147/pberger/maverick2/gadget_runs/cosmo1/')
         parser.add_argument('--file_name', default='n512_512Mpc_cosmo1_z0_gridpart.h5')
         parser.add_argument('--datadim', type=int, default=3, help='2 to train on slices, 3 to train on volumes') #not currently functional for 2d                                                                                    
+        parser.add_argument('--fac', type=float, default=1.0, help='multiply by this factor when downsampling')
         parser.add_argument('--loglike_a', type=float, default=None, help='scaling parameter in loglike transformatio\
 n of data')
         parser.add_argument('--log_scaling', type=bool, default=False, help='use log scaling from HIGAN paper')
@@ -145,6 +148,7 @@ n of data')
 nal information used for cGAN')
         parser.add_argument('--n_genstep', type=int, default=1, help='number of generator steps for each discrimina\
 tor step')
+        parser.add_argument('--single_z_idx', type=int, default=9, help='redshift index for single redshift runs')
         parser.add_argument('--nseed', type=int, default=1, help='number of seeds to choose from training data')
         parser.add_argument('--nsims', type=int, default=32, help='number of simulation boxes to get samples from')
         parser.add_argument('--cubedim', type=int, default=128, help='the height / width of the input image to netw\
@@ -249,14 +253,16 @@ def load_in_simulations(opt):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                 for j, idx in enumerate(opt.redshift_idxs):
                     sim = ofile["%3.3d"%(idx)][()].copy()
-                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor)
+                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)
         return np.array(sim_boxes), np.array(zlist)
     else:
         for i in xrange(nsims):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
-                print('loading redshift 0')
-                sim = ofile["009"][()].copy()
-                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a, ds_factor=opt.ds_factor)
+                print('loading redshift 3')
+                #sim = ofile["003"][()].copy()
+                sim = ofile["%3.3d"%(opt.single_z_idx)][()].copy()
+                #sim = ofile["009"][()].copy()
+                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)
             ofile.close()
         #with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
 #            for i in xrange(nsims):
@@ -333,20 +339,20 @@ def objective_gan(fakeD, realD):
                       torch.zeros(realD.size(0), 1) + 1e-3))
     return bce(torch.cat((fakeD, realD)), Variable(labD))
 
-def partition_cube(sim, length, cubedim, sim_boxes, cparam_list=None, cond=None, loglike_a=None, ds_factor=1):
+def partition_cube(sim, length, cubedim, sim_boxes, cparam_list=None, cond=None, loglike_a=None, ds_factor=1, fac=1):
     for x in xrange(int(length/cubedim)):
         for y in xrange(int(length/cubedim)):
             for r in xrange(int(length/cubedim)):
                 if loglike_a is None:
                     if ds_factor != 1:
-                        sim_boxes.append(blockwise_average_3D(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], [ds_factor, ds_factor, ds_factor]))
+                        sim_boxes.append(blockwise_average_3D(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], [ds_factor, ds_factor, ds_factor], fac=fac))
                     else:
                         sim_boxes.append(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim]\
 \
 )
                 else:
                     if ds_factor != 1:
-                        sim_boxes.append(loglike_transform(blockwise_average_3D(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], [ds_factor, ds_factor, ds_factor])))
+                        sim_boxes.append(loglike_transform(blockwise_average_3D(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], [ds_factor, ds_factor, ds_factor], fac=fac)))
                     else:
                         sim_boxes.append(loglike_transform(sim[x*cubedim:(x+1)*cubedim, y*cubedim:(y+1)*cubedim, r*cubedim:(r+1)*cubedim], a=loglike_a))
                 if cparam_list is not None:

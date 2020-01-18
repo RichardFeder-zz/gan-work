@@ -48,7 +48,10 @@ sizes = np.array([8,4,2,1])
 
 #redshift_bins = np.array([1., 0.5, 0.25, 0.])
 #redshift_strings = np.array(['006', '007', '008', '009'])
-redshift_bins = np.array([3., 1.5, 0.5, 0.])
+#redshift_bins = np.array([3., 1.5, 0.5, 0.])
+#redshift_bins = np.array([2., 1., 0.])
+redshift_bins = np.array([0.5, 0.25, 0.])*opt.cond_scale_fac
+redshift_strings = np.array(['007', '008', '009'])
 
 cond_bins = np.array([[[0.801, 0.28724518], [0.801, 0.3132452],  [0.801, 0.3392452 ]],
              [[0.829, 0.28724518], [0.829, 0.3132452 ], [0.829, 0.3392452 ]],
@@ -56,7 +59,9 @@ cond_bins = np.array([[[0.801, 0.28724518], [0.801, 0.3132452],  [0.801, 0.33924
 
 
 age_bins = cosmo.age(redshift_bins)/cosmo.age(0)
-redshift_strings = np.array(['003', '005','007', '009'])
+print('age bins:', age_bins)
+#redshift_strings = np.array(['003', '005','007', '009'])
+#redshift_strings = np.array(['004','006','009'])
 #redshift_bins = np.array([5., 3., 1., 0.5, 0.])
 #redshift_strings = np.array(['002', '003', '006', '007', '009'])
 #redshift_bins = np.array([10., 7.5, 5., 3., 2., 1.5, 1., 0.5, 0.25, 0.]) 
@@ -119,6 +124,7 @@ else:
 # sets learning rate scheduler to decay as training continues
 
 if opt.schedule:
+    print('Schedule is true!!!')
     schedulerD = torch.optim.lr_scheduler.StepLR(optimizerD, step_size=opt.step_size, gamma=opt.gamma)
     schedulerG = torch.optim.lr_scheduler.StepLR(optimizerD, step_size=opt.step_size, gamma=opt.gamma)
 else:
@@ -164,6 +170,7 @@ class GAN_optimization():
             else:
                 cidx = np.random.choice(np.arange(len(self.conds)), opt.batchSize)
                 c = self.conds[cidx]
+            #print(np.max(c), np.min(c))
             noise = torch.cat((noise, torch.from_numpy(c).float().view(-1,1,1,1,1).to(device)),1)
             return noise, c
         return noise, None
@@ -172,18 +179,13 @@ class GAN_optimization():
         label = torch.full((self.batchSize,), real_label, device=device)
         real_cpu = torch.unsqueeze(real_cpu, 1).float()
         d_real = self.netD(real_cpu, cond=c)
-        #loss_real = self.get_loss(d_real, opt, label=label)
         loss_real = self.criterion(d_real, label)
         noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
         fake = self.netG(noise)
         label.fill_(fake_label)
         d_fake = self.netD(fake.detach(), cond=c)
-        #loss_fake = self.get_loss(d_fake, opt, label=label)
         loss_fake = self.criterion(d_fake, label)
         loss = loss_real + loss_fake
-        #print('loss:', loss)
-        #loss.backward()
-        #loss_fake.backward()
         self.optimizer.zero_grad()
         self.optimizer.step(loss=loss)
         
@@ -317,7 +319,10 @@ def training_epoch(opt, ganopt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms
 
     weightG.append(model_weight_norm(ganopt.netG))
     weightD.append(model_weight_norm(ganopt.netD))
-    save_current_state(ganopt, epoch, new_dir, gnorms, dnorms, lossGs, lossDs, weightG, weightD)
+
+    if epoch % opt.save_frac == 0:
+        print('Saving models/stats from epoch', epoch)
+        save_current_state(ganopt, epoch, new_dir, gnorms, dnorms, lossGs, lossDs, weightG, weightD)
     
     return lossGs, lossDs, gnorms, dnorms, ganopt
 
@@ -332,6 +337,7 @@ else:
     #sim_boxes *= -1.0 # tested this, doesn't make a difference on final results
     cparam_list = None
     conds = None
+    print(type(sim_boxes), len(sim_boxes))
 
 opt.himax = np.max(sim_boxes)
 print('maximum value is', opt.himax)
@@ -360,7 +366,7 @@ else:
 
 
 for i in xrange(opt.n_epochs):
-    lossGs, lossDs, gnorms, dnorms, ganopt = training_epoch(opt, ganopt, i, sim_boxes, lossGs, lossDs, gnorms, dnorms, cparam_list=cparam_list)
+    lossGs, lossDs, gnorms, dnorms, ganopt = training_epoch(opt, ganopt, i, sim_boxes, lossGs, lossDs, gnorms, dnorms, weightG, weightD, cparam_list=cparam_list)
     
 print('saving models..')
 save_nn(ganopt.netG, new_dir+'/netG')
@@ -378,7 +384,7 @@ if opt.get_optimal_discriminator:
     for i in xrange(opt.disc_only_epochs):
         print('Epoch '+str(i)+' of '+str(opt.disc_only_epochs))
         print
-        lossGs, lossDs, gnorms, dnorms, ganopt = training_epoch(opt, ganopt, opt.n_epochs+i, sim_boxes, lossGs, lossDs, gnorms, dnorms, disc_opt=True)
+        lossGs, lossDs, gnorms, dnorms, ganopt = training_epoch(opt, ganopt, opt.n_epochs+i, sim_boxes, lossGs, lossDs, gnorms, dnorms, weightG, weightD, disc_opt=True)
         save_nn(ganopt.netD, richard_workdir+opt.netG+'/netD_optimal_epoch_'+str(i))
         
 #save_nn(ganopt.netD, new_dir+'/netD_optimal')
