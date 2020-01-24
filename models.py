@@ -1,3 +1,4 @@
+
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
@@ -352,6 +353,7 @@ class DC_Discriminator3D_simpler(nn.Module):
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
             if cond is not None:
                 cond_features = make_feature_maps(cond, output1[0,0,:,:,:].shape, self.device)
+                #print('cond features:', cond_features[1,:])
                 #print(torch.max(cond_features), torch.min(cond_features))
                 output1 = torch.cat((output1, cond_features), 1)
             output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))

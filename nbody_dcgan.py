@@ -48,10 +48,15 @@ sizes = np.array([8,4,2,1])
 
 #redshift_bins = np.array([1., 0.5, 0.25, 0.])
 #redshift_strings = np.array(['006', '007', '008', '009'])
-#redshift_bins = np.array([3., 1.5, 0.5, 0.])
+
+redshift_strings = np.array(['003', '005', '007', '009'])
+redshift_bins = np.array([3., 1.5, 0.5, 0.])
+
+
 #redshift_bins = np.array([2., 1., 0.])
-redshift_bins = np.array([0.5, 0.25, 0.])*opt.cond_scale_fac
-redshift_strings = np.array(['007', '008', '009'])
+
+#redshift_bins = np.array([0.5, 0.25, 0.])*opt.cond_scale_fac
+#redshift_strings = np.array(['007', '008', '009'])
 
 cond_bins = np.array([[[0.801, 0.28724518], [0.801, 0.3132452],  [0.801, 0.3392452 ]],
              [[0.829, 0.28724518], [0.829, 0.3132452 ], [0.829, 0.3392452 ]],
@@ -68,11 +73,19 @@ print('age bins:', age_bins)
 #redshift_strings = np.array(["%3.3d"%(i) for i in xrange(len(redshift_bins))])
 
 if opt.redshift_code:
-    opt.redshift_bins=redshift_bins
+    if opt.age_bins:
+        print('using fractional ages instead of redshifts')
+        opt.redshift_bins = age_bins
+        conds = age_bins
+    else:
+        opt.redshift_bins=redshift_bins
+        conds = redshift_bins
     opt.redshift_idxs = np.array([int(r) for r in redshift_strings])
     output1shape = (opt.cubedim/(2*opt.ds_factor), opt.cubedim/(2*opt.ds_factor), opt.cubedim/(2*opt.ds_factor)) # for conditional feature maps in discriminator 
-    conds = redshift_bins
+    #conds = redshift_bins
+    #conds = age_bins
     print('Redshifts:', redshift_bins)
+    print('Conditional values:', conds)
     print('Redshift strings:', redshift_strings)
     print('Redshift idxs:', opt.redshift_idxs)
 else:
@@ -165,6 +178,7 @@ class GAN_optimization():
         else:
             noise = torch.randn(self.batchSize, latent_dim, 1, 1, 1, device=device)
         if self.cond_params is not None:
+            #print('cond params is not None, self.conds is ', self.conds)
             if fixed_c is not None:
                 c = np.repeat([fixed_c], opt.batchSize, axis=0)
             else:
@@ -181,6 +195,7 @@ class GAN_optimization():
         d_real = self.netD(real_cpu, cond=c)
         loss_real = self.criterion(d_real, label)
         noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
+        print('c:', c)
         fake = self.netG(noise)
         label.fill_(fake_label)
         d_fake = self.netD(fake.detach(), cond=c)
@@ -193,7 +208,7 @@ class GAN_optimization():
 
     def discriminator_step(self, real_cpu, disc_opt=False, c=None, zs=None, df=None):
         self.netD.zero_grad()
-
+        #print('discriminator step c=', c.ravel())
         # train with real
         label = torch.full((self.batchSize,), real_label, device=device)
         real_cpu = torch.unsqueeze(real_cpu, 1).float() # reshape for 1 channel images                        
@@ -204,6 +219,7 @@ class GAN_optimization():
 
         # train with fake
         noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
+        #print('fake draw ', c.ravel())
         fake = self.netG(noise)
         label.fill_(fake_label)
         output = self.netD(fake.detach(), cond=c)
@@ -243,6 +259,8 @@ class GAN_optimization():
     def generator_step(self, zs=None, df=None):
         
         noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
+        #print('c:', c)
+        #print(noise)
         fake = self.netG(noise)
         label = torch.full((self.batchSize,), real_label, device=device)
         self.netG.zero_grad()
@@ -260,6 +278,7 @@ class GAN_optimization():
             loss_real, loss_fake = self.acgd_step(real_cpu, zs=zs, c=cparams, df=df)
             return loss_real, loss_fake
         else:
+            #print('cparams is ', cparams)
             errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, disc_opt=disc_opt, zs=zs, c=cparams, df=df)
             for i in xrange(opt.n_genstep):
                 errG, D_G_z2, gnorm = self.generator_step(zs=zs, df=df)

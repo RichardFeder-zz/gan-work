@@ -153,9 +153,12 @@ eps))-gamma
             z = sigma*torch.distributions.StudentT(scale=sigma,df=df).rsample(sample_shape=(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1)).float().to(self.device)
         else:
             z = sigma*torch.randn(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
+        
+        print('c=', c)
         print('self.device:', self.device)
-        if c is not None:
+        if c is not None and n_conditional > 0:
             for i in xrange(n_conditional):
+                print(c[i])
                 z[:,-i] = c[i]
             #z[:,-1] = c                                                                    
         gensamps = generator(z)
@@ -411,6 +414,27 @@ def find_best_epoch(timestr, nsamp=200, epochs=None, k1 = 0.2, k2 = 0.3, ncond=0
         print('sum of errs:', np.sum(errs))
 
 
+def collect_layer_weights(model):
+    all_weights = []
+    for key in model.state_dict().keys():
+        if 'weight' in key:
+            weights = []
+            layerweights = model.state_dict()[key]
+            print(layerweights.shape)
+    return all_weights
+
+def filter_powerspec(filters):
+    arrffts_real, arrffts_imag = [], []
+    for arr in filters:
+        arrfft = np.fft.fftn(arr[0])
+        freq = np.fft.fftfreq(arrfft.shape[-1])
+        arrffts_real.append(np.fft.fftshift(arrfft).real)
+        arrffts_imag.append(np.fft.fftshift(arrfft).imag)
+    
+    arrffts_real = np.array(arrffts_real)
+    arrffts_imag = np.array(arrffts_imag)
+    
+    return arrffts_real, arrffts_imag, freq
 
 def compute_covariance_matrix(kbins, powerspec_1, powerspec_2):
     covariance_matrix = np.zeros((len(kbins), len(kbins)))
@@ -489,3 +513,165 @@ def compute_matter_bispectrum(vols, cubedim=64, k1=0.1, k2=0.5):
             bis = PKL.Bk(vols[i]-np.mean(vols[i]), float(cubedim), k1, k2, thetas)
             bks.append(bis.B)
     return bks, thetas
+
+def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncond=0,\
+                  use_realdat=True, load_discriminator=False, opt_disc_epoch=-1, extra_conv_layers=0, \
+                  plot_all=False, plot_loss=False, plot_gradnorm=False, network_weights=False, unscaled_voxel_pdf=False, scaled_voxel_pdf=False, average_density=False, \
+                  power_spec=False, mode='median', covariance=False, correlation=False, cross_spec=False, \
+                  bispectrum=False, k1=0.2, k2=0.2,  \
+                  workdir ='/work/06224/rfederst/maverick2/', print_pdict=True, sizes=np.array([8., 4., 2., 1.]), discriminator_output=False, labels=None, colors=['royalblue']):
+    if use_realdat:
+        realdat = np.array(nbody.datasims[-nsamp:])
+    
+    if plot_all:
+        print('Plotting all statistics')
+        plot_loss, plot_gradnorm, unscaled_voxel_pdf, scaled_voxel_pdf, average_density = [True for f in range(5)]
+        power_spec, indiv_pspec, covariance, correlation, cross_spec, bispectrum = [True for f in range(6)]
+    
+    if power_spec:
+        genpk_list, genk_list = [], []
+    if bispectrum:
+        genbk_list, theta_list = [], []
+        
+
+    
+    gen, pdict = nbody.restore_generator(timestr, epoch=epoch, n_condparam=ncond, \
+                                         discriminator=load_discriminator, extra_conv_layers=extra_conv_layers)
+
+    print('Model weight norm is ', model_weight_norm(gen))
+
+    if print_pdict:
+        print pdict
+    if plot_loss:
+        plot_diag(workdir, timestr, mode='loss_epoch', epoch=epoch)
+
+    if plot_gradnorm:
+        plot_diag(workdir, timestr, mode='grad_norm', epoch=epoch, show_disc=False, marker='.', alpha=0.2)
+
+
+    logl_a = pdict['loglike_a']
+
+    if pdict['get_optimal_discriminator'] and opt_disc_epoch > -1:
+        print('Loading optimal discriminator for trained model after ', opt_disc_epoch+1, 'epochs of training')
+        opt_disc_model = DC_Discriminator3D(pdict['ngpu'], 1, pdict['ndf'], sizes, n_cond_features=ncond).to(device)
+        opt_disc_model.load_state_dict(torch.load(workdir+'results/'+timestr+'/netD_optimal_epoch_2', map_location=device))
+        opt_disc_model.eval()
+
+    d_out=None
+    if discriminator_output:
+        d_out=discriminator
+        
+    gen_samp_list = []
+    list_of_figs, list_of_fig_keys = [], []
+
+    if c is None:
+        c=[0.0]
+    
+    if labels is None:
+        labels=[str(var) for var in c]
+    
+    colors = ['royalblue' for i in range(len(c))]
+        
+    for i, var in enumerate(c):
+
+        print('c=', var)
+        
+        gen_samps = nbody.get_samples(gen, nsamp, pdict, sigma=gen_sigma, n_conditional=ncond, c=[var], discriminator=d_out,)
+    
+        figs, fig_key = [], []
+        thresh = np.percentile(gen_samps, 99.995)
+        print('thresh:', thresh, inverse_loglike_transform(thresh, logl_a))
+        
+        if scaled_voxel_pdf:
+            print('Computing scaled voxel PDF..')
+            if use_realdat:
+                voxel_pdf_scaled = plot_voxel_pdf(gen_vols=gen_samps, real_vols = loglike_transform(realdat, logl_a))
+            else:
+                voxel_pdf_scaled = plot_voxel_pdf(gen_vols=gen_samps)
+
+            figs, fig_key = add_figure_key(voxel_pdf_scaled, figs, key='Scaled voxel PDF', key_list=fig_key)
+        
+        if unscaled_voxel_pdf:
+            print('Computing unscaled voxel PDF..')
+            if use_realdat:
+                voxel_pdf_unscaled = plot_voxel_pdf(gen_vols=inverse_loglike_transform(gen_samps, a=logl_a), real_vols = realdat, mode='unscaled')
+            else:
+                voxel_pdf_unscaled = plot_voxel_pdf(gen_vols=inverse_loglike_transform(gen_samps, a=logl_a), mode='unscaled')
+                
+            figs, fig_key = add_figure_key(voxel_pdf_unscaled, figs, key='Unscaled voxel PDF', key_list=fig_key)
+        
+        if network_weights:
+            f_weights = plot_network_weights(gen)
+            figs, fig_key = add_figure_key(f_weights, figs, key='Network Weight Histogram', key_list=fig_key)
+                   
+        if power_spec:
+            print('Computing power spectra..')
+            pk, kbin = compute_power_spectra(gen_samps, inverse_loglike_a=logl_a, unsqueeze=True, cubedim=pdict['cubedim'])
+            genpk_list.append(pk)
+            genk_list.append(kbin)
+            
+            kbinz_gen, pkz_gen = filter_nan_pk(kbin, pk)
+            if use_realdat:
+                with open('npoint_stats/powerspectra_kbins_gadget2.pkl', 'r') as f:
+                    kbins = np.array(pickle.load(f))
+
+                with open('npoint_stats/power_spectra_gadget2_z='+str(var)+'.pkl', 'r') as f:
+                    pks = np.array(pickle.load(f))
+
+                kbinz, pkz = filter_nan_pk(kbins, pks)
+            
+                f_powerspectra = plot_powerspectra(realpk=pks, realkbins=kbins,reallabel='GADGET-2 ($z=$'+str(var)+')', \
+                                                   genpks=[pk], genkbins=[kbin], labels=labels[i],mode=mode,frac=True, colors=[colors[i]])
+                
+            else:
+                f_powerspectra = plot_powerspectra(genpks=[pk], genkbins=[kbin], labels=labels[i],mode=mode,frac=False, colors=[colors[i]])
+               
+            figs, fig_key = add_figure_key(f_powerspectra, figs, key='Power spectrum (z='+str(var)+')', key_list=fig_key)
+                
+
+            if covariance:
+                cov_gen = compute_covariance_matrix(kbinz_gen, pkz_gen, pkz_gen)
+                cov_real = compute_covariance_matrix(kbinz, pkz, pkz)
+                
+                fcov = plot_corr_cov_matrices(cov_real, cov_gen, mode='cov', vmax=0.9, kbins=kbinz)
+                figs, fig_key = add_figure_key(fcov, figs, key='Covariance matrix (z='+str(var)+')', key_list=fig_key)
+
+            if correlation:
+                corr_gen = np.corrcoef(pkz_gen.transpose())
+                corr_real = np.corrcoef(pkz.transpose())
+                
+                fcorr = plot_corr_cov_matrices(corr_real, corr_gen, mode='corr', vmax=0.25, kbins=kbinz)
+                figs, fig_key = add_figure_key(fcorr, figs, key='Correlation matrix (z='+str(var)+')', key_list=fig_key)
+
+                
+            
+        if cross_spec:
+            print('Computing auto/cross power spectra..')
+            gen_xcorr, binz_gen = compute_average_cross_correlation(gen_samples=inverse_loglike_transform(gen_samps, a=logl_a))
+            real_xcorr, binz = compute_average_cross_correlation(real_samples=realdat)
+            real_gen_xcorr, binz_real_gen = compute_average_cross_correlation(real_samples=realdat, gen_samples=np.array(inverse_loglike_transform(gen_samps, a=logl_a)))
+
+            f_cross_spectra = plot_cross_spectra(real_xcorr, gen_xcorr, real_gen_xcorr, binz)
+            figs, fig_key = add_figure_key(f_cross_spectra, figs, key='Cross spectrum (z='+str(var)+')', key_list=fig_key)
+                
+        if bispectrum:   
+            print('Computing matter bispectrum for k1='+str(k1)+', k2='+str(k2)+'..')
+            bk, ts = compute_matter_bispectrum(inverse_loglike_transform(gen_samps[:,0,:,:,:], logl_a), k1=k1, k2=k2, cubedim=float(pdict['cubedim']))
+            
+            genbk_list.append(bk)
+            theta_list.append(ts)
+            
+            with open('npoint_stats/bispectra_gadget2_k1='+str(k1)+'_k2='+str(k2)+'.pkl', 'r') as f:
+                bks = np.array(pickle.load(f))
+
+            with open('npoint_stats/bispectra_thetas.pkl', 'r') as f:
+                thetas = pickle.load(f)
+                
+            f_bispectra = plot_bispectra(k1, k2, genbks=[bk], thetabins=[ts], labels=[labels[i]], realbk=bks, realthetabins=thetas)
+            figs, fig_key = add_figure_key(f_bispectra, figs, key='Bispectrum (z='+str(var)+')', key_list=fig_key)
+
+        list_of_figs.append(figs)
+        list_of_fig_keys.append(fig_key)
+            
+            
+    return list_of_figs, list_of_fig_keys

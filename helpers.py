@@ -31,6 +31,13 @@ outparam_dict = dict({'2d_gaussian':2, '1d_gaussian':1, 'bernoulli':1, 'ring':2,
 
 Device = 'cpu'
 
+def add_figure_key(fig, fig_list, key=None, key_list=None):
+    fig_list.append(fig)
+    if key is not None:
+        key_list.append(key)
+        
+    return fig_list, key_list  
+
 def blockwise_average_3D(A,S, fac=1):
     # A is the 3D input array                                                                                       
     # S is the blocksize on which averaging is to be performed                                                      
@@ -102,6 +109,14 @@ def draw_training_batch(sim_boxes, sim_idxs, opt):
 
     return dat, choice
 
+
+def filter_nan_pk(kbin, pk):
+    mask = ~np.isnan(kbin)
+    kbinz = kbin[mask]
+    pkz = pk[:,mask]
+        
+    return kbinz, pkz
+
 def get_parsed_arguments(dattype):
 
     parser = argparse.ArgumentParser()
@@ -146,11 +161,14 @@ n of data')
         parser.add_argument('--xmax', type=float, default=50000, help='maximum value to pin s(xmax)=1 to in piecewise transformation')
         parser.add_argument('--redshift_code', type=bool, default=False, help='determines whether redshift conditio\
 nal information used for cGAN')
+        parser.add_argument('--separate_sims', type=bool, default=False, help='reduce overlap of simulations when conditioning on several redshift snapshots')
+        parser.add_argument('--age_bins', type=bool, default=False, help='set to True if using fractional times t_z as conditional information rather than redshift z')
         parser.add_argument('--n_genstep', type=int, default=1, help='number of generator steps for each discrimina\
 tor step')
         parser.add_argument('--single_z_idx', type=int, default=9, help='redshift index for single redshift runs')
         parser.add_argument('--nseed', type=int, default=1, help='number of seeds to choose from training data')
         parser.add_argument('--nsims', type=int, default=32, help='number of simulation boxes to get samples from')
+        parser.add_argument('--n_max_sims', type=int, default=32, help='maximum number of simulations in set, mainly to be used w conditional redshift snapshots')
         parser.add_argument('--cubedim', type=int, default=128, help='the height / width of the input image to netw\
 ork')
         parser.add_argument('--ds_factor', type=int, default=1, help='specify if downsampling data for coarser resolution')
@@ -247,24 +265,41 @@ def load_in_simulations(opt):
 
     if opt.redshift_code:
         zlist = [] # array storing the redshift slice of a given volume in sim_boxes                               \
-                                                                                                                    
-        for i in xrange(nsims):
-            print('loading sim ', i, 'of ', nsims)
-            with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
-                for j, idx in enumerate(opt.redshift_idxs):
-                    sim = ofile["%3.3d"%(idx)][()].copy()
-                    sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)
+                        
+
+        if opt.separate_sims:
+            nload = 0
+            for j, idx in enumerate(opt.redshift_idxs):
+
+                #istart = nload % opt.n_max_sims
+                #print('istart=', istart)
+                for i in xrange(nsims):
+                    print('loading sim', i, 'of', nsims, 'for redshift', opt.redshift_bins[j], 'idx=', nload%opt.n_max_sims +1)
+                    with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(nload%opt.n_max_sims + 1)+'_gridpart.h5', 'r') as ofile:
+                        sim = ofile["%3.3d"%(idx)][()].copy()
+                        sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=opt.redshift_bins[j], loglike_a=opt.loglike_a)
+                        #sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)           
+                    nload += 1
+        else:
+
+            for i in xrange(nsims):
+                print('loading sim ', i, 'of ', nsims)
+                with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
+                    for j, idx in enumerate(opt.redshift_idxs):
+                        sim = ofile["%3.3d"%(idx)][()].copy()
+                        sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=opt.redshift_bins[j], loglike_a=opt.loglike_a)
+                        #sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)
+        #print('zlist:')
+        #print(zlist)
         return np.array(sim_boxes), np.array(zlist)
     else:
         for i in xrange(nsims):
             with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
-                print('loading redshift 3')
-                #sim = ofile["003"][()].copy()
+                print('redshift index = ', opt.single_z_idx)
                 sim = ofile["%3.3d"%(opt.single_z_idx)][()].copy()
-                #sim = ofile["009"][()].copy()
                 sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)
             ofile.close()
-        #with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
+#with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
 #            for i in xrange(nsims):
 #                sim = ofile['seed'+str(i+1)][()].copy()
 #                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a)
