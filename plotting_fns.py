@@ -1,4 +1,4 @@
-import matplotlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import os
 from matplotlib import cm
@@ -39,6 +39,39 @@ def view_sim_2d_slices(sim):
         tracker = IndexTracker(ax, sim)
         fig.canvas.mpl_connect('button_press_event', tracker.onscroll)
         plt.show()
+
+def convert_png_to_gif(n_image, gifdir='figures/frame_dir', name='multiz', fps=2):
+    images = []
+    for i in range(n_image):
+        print(i)
+        a = Image.open(gifdir+'/vol_'+str(i)+'.png')
+        images.append(a)
+    
+    imageio.mimsave(gifdir+'/'+name+'.gif', images, fps=fps)
+
+def get_vol_pts(vol, npoints=300000, thresh=-0.95, logl_a=4., cubedim=64):    
+    plotpts = []
+    
+    if npoints < cubedim**3:
+        print('sampling random')
+        for n in xrange(npoints):
+            xyz = np.random.randint(0, 63, size=3)
+            plotpts.append([xyz[0], xyz[1], xyz[2], vol[xyz[0],xyz[1],xyz[2]]])
+    else:
+        print('sampling all points on grid')
+        for i in np.arange(cubedim):
+            for j in np.arange(cubedim):
+                for k in np.arange(cubedim):
+                    plotpts.append([i, j, k, vol[i,j,k]])
+
+    plotpts = np.array(plotpts)
+    print(len(plotpts[plotpts[:,3]<thresh]))
+    plotpts = plotpts[plotpts[:,3]>thresh]
+    
+    sizes = loglike_transform(inverse_loglike_transform(plotpts[:,3], a=logl_a), a=15.)
+    
+    return plotpts, sizes
+
 
 def make_gif_slices(vol, name='test', timestr=None, length=None, save=False):
     images = []
@@ -95,7 +128,7 @@ def plot_diag(base_path, timestring, mode='grad_norm', epoch=None, save=False, s
     return f
 
 
-def plot_bispectra(k1, k2, genbks=[], thetabins=[], labels=[], realbk=None, realthetabins=[],timestr=None, \
+def plot_bispectra(k1, k2, genbks=[], thetabins=[], labels=[], reallabel='GADGET-2', realbk=None, realthetabins=[],timestr=None, \
                     z=None, title=None, mode='median', ymin=1.5e5, ymax=1.5e7):
     fig, (ax) = plt.subplots(1, 1, figsize=(8,6))
 #     plt.subplot(1,2,1)
@@ -104,7 +137,7 @@ def plot_bispectra(k1, k2, genbks=[], thetabins=[], labels=[], realbk=None, real
         plt.fill_between(realthetabins, np.percentile(realbk, 16, axis=0), np.percentile(realbk, 84, axis=0), \
 \
 facecolor='green', alpha=0.4)
-        plt.plot(realthetabins, np.median(realbk, axis=0), label='GADGET-2', color='forestgreen', marker='.')
+        plt.plot(realthetabins, np.median(realbk, axis=0), label=reallabel, color='forestgreen', marker='.')
         plt.plot(realthetabins, np.mean(realbk, axis=0), color='forestgreen', marker='.', linestyle='dashed')
 
         plt.plot(realthetabins, np.percentile(realbk, 16, axis=0), color='forestgreen')
@@ -139,7 +172,7 @@ facecolor='green', alpha=0.4)
 
     return fig
 
-def plot_powerspectra(genpks=[], genkbins=[], labels=[],realpk=None, realkbins=None, frac=False, timestr=None, z=None, title=None, colors=None, mode='median'):
+def plot_powerspectra(genpks=[], genkbins=[], labels=[],reallabel='GADGET-2',realpk=None, realkbins=None, frac=False, timestr=None, z=None, title=None, colors=None, mode='median'):
 
     if title is None:
         title = 'Comparison of power spectra with 1$\\sigma$ shaded regions'
@@ -155,9 +188,9 @@ def plot_powerspectra(genpks=[], genkbins=[], labels=[],realpk=None, realkbins=N
         ax.fill_between(realkbins, np.percentile(realpk, 16, axis=0), np.percentile(realpk, 84, axis=0), facecolor='green', alpha=\
 0.4)
         if mode=='median':
-            ax.plot(realkbins, np.median(realpk, axis=0), label='GADGET-2', color='forestgreen', marker='.')
+            ax.plot(realkbins, np.median(realpk, axis=0), label=reallabel, color='forestgreen', marker='.')
         elif mode=='mean':
-            ax.plot(realkbins, np.mean(realpk, axis=0), label='GADGET-2', color='forestgreen', marker='.')
+            ax.plot(realkbins, np.mean(realpk, axis=0), label=reallabel, color='forestgreen', marker='.')
         ax.plot(realkbins, np.percentile(realpk, 16, axis=0), color='forestgreen')
         ax.plot(realkbins, np.percentile(realpk, 84, axis=0), color='forestgreen')
 
@@ -452,11 +485,11 @@ def plot_data_scalings(mode='loglike', a_range=[1, 4, 10, 50], eps=None, lin=Non
 
     return f
 
-def plot_average_density_hist(avmass_real=None, avmass_gen=None, show=True, alpha_real=0.8, alpha_gen=0.8):
+def plot_average_density_hist(avmass_real=None, avmass_gen=None, show=True, alpha_real=0.8, alpha_gen=0.8, reallabel='GADGET-2'):
     bins = None
     f = plt.figure()
     if avmass_real is not None:
-        _, bins, _ = plt.hist(np.log10(avmass), bins=20, label='GADGET-2', color='forestgreen',alpha=alpha_real, density=True)
+        _, bins, _ = plt.hist(np.log10(avmass), bins=20, label=reallabel, color='forestgreen',alpha=alpha_real, density=True)
     if avmass_gen is not None:
         if bins is None:
             bins = 20
@@ -467,3 +500,138 @@ def plot_average_density_hist(avmass_real=None, avmass_gen=None, show=True, alph
     if show:
         plt.show()
     return f
+
+def plot_network_weights(gen, minp=-2.0, maxp=2.0, nbin=50):
+    params = []
+    for p in gen.parameters():
+        params.extend(p.detach().cpu().numpy().ravel())
+    f = plt.figure()
+    plt.hist(params, bins=np.linspace(minp, maxp, nbin), histtype='step')
+    plt.legend()
+    plt.yscale('symlog')
+    plt.xlabel('Weight value')
+    plt.show()
+    return f
+
+
+
+def plot_volume_multiple_z(gen, minz=0.0, maxz=3.0, nz=8, latent_dim=200, npoints=300000, thresh=-0.95, cmap='winter'):
+    pt = [[0,0,0], [0,0,64],[0,64,0],[0,64,64],[64,0,0],[64,0,64],[64,64,0],[64,64,64]]
+    pairs = np.array([np.array([pt[0], pt[1]]), np.array([pt[0], pt[2]]), np.array([pt[0], pt[4]]), \
+            np.array([pt[3], pt[1]]), np.array([pt[3], pt[2]]), np.array([pt[6], pt[7]]), np.array([pt[5], pt[7]]), \
+            np.array([pt[5], pt[4]]), np.array([pt[6], pt[4]]), np.array([pt[7], pt[3]]), np.array([pt[2], pt[6]]), np.array([pt[5], pt[1]])])
+    
+    cond_zs = np.flip(np.linspace(minz, maxz, nz))
+    fixed_z = torch.randn(1, latent_dim+1, 1, 1, 1).float().to(device)
+    
+    fig = plt.subplots(figsize=(12, 6))
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1, wspace=0.0, hspace=0.0)
+
+    for i, z in enumerate(cond_zs):
+        ax = fig.add_subplot(2, 4, i+1, projection='3d')
+        ax.set_title('$z=$'+str(np.round(z, 3)), fontsize=14)
+        print('z=', z)
+
+        fixed_z[:,-1] = z
+        samp = gen(fixed_z).cpu().detach().numpy()
+
+        
+        ps, sizes = get_vol_pts(samp[0][0], npoints=npoints, thresh=thresh)
+
+        for p in pairs:
+            plt.plot(p[:,0], p[:,1], p[:,2], color='k')
+        p = ax.scatter3D(ps[:,0], ps[:,1], ps[:,2], c=ps[:,0], s=(sizes+1)**4, cmap=cmap)
+        
+        plt.xlim(0, 64)
+        plt.ylim(0,64)
+        ax.grid(False)
+        ax.set_axis_off()
+
+    plt.tight_layout(pad=0.0, w_pad=0.0, h_pad=0.0)
+
+    plt.show()
+    
+    return fig
+
+def plot_pk_multiple_z(gen, minz=0.0, maxz=3.0, nz=60, latent_dim=200):
+    cond_zs = np.linspace(minz, maxz, nz)
+    pks = []
+    fixed_z = torch.randn(1, latent_dim+1, 1, 1, 1).float().to(device)
+    norm = mpl.colors.Normalize(vmin=minz, vmax=maxz)
+
+    colormap = matplotlib.cm.ScalarMappable(norm=norm, cmap='rainbow')
+    colormap.set_array(cond_zs/maxz)
+    colorz = cm.rainbow(cond_zs/maxz)
+    
+    for i, z in enumerate(cond_zs):
+        fixed_z[:,-1] = z
+        samp = gen(fixed_z).cpu().detach().numpy()
+        
+        pk, kbin = compute_power_spectra(samp, cubedim=64)
+        pks.append(pk[0])
+        
+    fig = plt.subplots(figsize=(6, 4))
+    
+    for i, pk in enumerate(pks):
+        plt.plot(kbin, pk, color=colorz[i], linewidth=0.5)
+        
+    plt.colorbar(colormap)
+    
+    
+    plt.yscale('log')
+    plt.xscale('log')
+    plt.xlabel('k [h $Mpc^{-1}$]', fontsize=16)
+    plt.ylabel('P(k) [$h^{-3}$$Mpc^3$]', fontsize=16)
+    plt.tight_layout()
+    
+    plt.show()
+    
+    return fig
+
+def plot_volume_gif_multiple_z(gen, frame_dir = 'figures/frame_dir', minz=0.0, maxz=3.0, nz=20, latent_dim=200, npoints=300000, thresh=-0.95, cmap='winter', fps=3):
+    pt = [[0,0,0], [0,0,64],[0,64,0],[0,64,64],[64,0,0],[64,0,64],[64,64,0],[64,64,64]]
+    
+    pairs = np.array([np.array([pt[0], pt[1]]), np.array([pt[0], pt[2]]), np.array([pt[0], pt[4]]), \
+            np.array([pt[3], pt[1]]), np.array([pt[3], pt[2]]), np.array([pt[6], pt[7]]), np.array([pt[5], pt[7]]), \
+            np.array([pt[5], pt[4]]), np.array([pt[6], pt[4]]), np.array([pt[7], pt[3]]), np.array([pt[2], pt[6]]), np.array([pt[5], pt[1]])])
+
+    cond_zs = np.flip(np.linspace(minz, maxz, nz))
+    fixed_z = torch.randn(1, latent_dim+1, 1, 1, 1).float().to(device)
+
+    volume_frames = []
+    
+    for i, z in enumerate(cond_zs):
+        
+        fig = plt.figure(figsize=(6,6))
+        ax = plt.axes(projection='3d')
+        ax.set_title('$z=$'+str(np.round(z, 3)), fontsize=14)
+        print('z=', z)
+
+        fixed_z[:,-1] = z
+        samp = gen(fixed_z).cpu().detach().numpy()
+
+        ps, sizes = get_vol_pts(samp[0][0], npoints=npoints, thresh=thresh)
+
+        for p in pairs:
+            plt.plot(p[:,0], p[:,1], p[:,2], color='k')
+        p = ax.scatter3D(ps[:,0], ps[:,1], ps[:,2], c=ps[:,0], s=(sizes+1)**4, cmap=cmap)
+
+        plt.xlim(0, 64)
+        plt.ylim(0,64)
+        ax.grid(False)
+        ax.set_axis_off()
+
+        plt.tight_layout(pad=0.0, w_pad=0.0, h_pad=0.0)
+
+        plt.show()
+        
+        volume_frames.append(fig)
+        
+    i=0
+    for f in volume_frames:
+        f.savefig(frame_dir+'/vol_'+str(i)+'.png', dpi=100)
+        i+=1
+
+    print('Converting to gif..')
+    convert_png_to_gif(nz, gifdir=frame_dir, fps=fps)
+    return volume_frames

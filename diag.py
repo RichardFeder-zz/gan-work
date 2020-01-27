@@ -149,6 +149,9 @@ eps))-gamma
 
 
     def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None, discriminator=None, sigma=1, df=None):
+
+
+
         if df is not None:
             z = sigma*torch.distributions.StudentT(scale=sigma,df=df).rsample(sample_shape=(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1)).float().to(self.device)
         else:
@@ -157,9 +160,10 @@ eps))-gamma
         print('c=', c)
         print('self.device:', self.device)
         if c is not None and n_conditional > 0:
-            for i in xrange(n_conditional):
-                print(c[i])
-                z[:,-i] = c[i]
+            z[:,-1] = c
+            #for i in xrange(n_conditional):
+                #print(c[i])
+                #z[:,-i] = c[i]
             #z[:,-1] = c                                                                    
         gensamps = generator(z)
         if discriminator is not None:
@@ -576,7 +580,7 @@ def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncon
 
         print('c=', var)
         
-        gen_samps = nbody.get_samples(gen, nsamp, pdict, sigma=gen_sigma, n_conditional=ncond, c=[var], discriminator=d_out,)
+        gen_samps = nbody.get_samples(gen, nsamp, pdict, sigma=gen_sigma, n_conditional=ncond, c=var, discriminator=d_out, df=pdict['df'])
     
         figs, fig_key = [], []
         thresh = np.percentile(gen_samps, 99.995)

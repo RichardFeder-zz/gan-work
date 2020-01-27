@@ -76,16 +76,14 @@ if opt.redshift_code:
     if opt.age_bins:
         print('using fractional ages instead of redshifts')
         opt.redshift_bins = age_bins
-        conds = age_bins
+        #conds = age_bins
     else:
         opt.redshift_bins=redshift_bins
-        conds = redshift_bins
+        #conds = redshift_bins
     opt.redshift_idxs = np.array([int(r) for r in redshift_strings])
     output1shape = (opt.cubedim/(2*opt.ds_factor), opt.cubedim/(2*opt.ds_factor), opt.cubedim/(2*opt.ds_factor)) # for conditional feature maps in discriminator 
-    #conds = redshift_bins
-    #conds = age_bins
     print('Redshifts:', redshift_bins)
-    print('Conditional values:', conds)
+    #print('Conditional values:', conds)
     print('Redshift strings:', redshift_strings)
     print('Redshift idxs:', opt.redshift_idxs)
 else:
@@ -158,11 +156,13 @@ class GAN_optimization():
         self.netD = netD
         self.netG = netG
         self.criterion = criterion
-        if cond_params is None:
-            self.cond_params = cond_params
-        else:
-            self.cond_params = np.array(cond_params)
-        self.conds = np.array(conds)
+        
+        #if cond_params is None:
+        #    self.cond_params = cond_params
+        #else:
+        #    self.cond_params = np.array(cond_params)
+        #self.conds = np.array(conds)
+        
         if opt.trainSize > 0:
             self.batchSize = np.minimum(opt.trainSize, opt.batchSize)
         else:
@@ -206,23 +206,34 @@ class GAN_optimization():
         
         return loss_real, loss_fake
 
-    def discriminator_step(self, real_cpu, disc_opt=False, c=None, zs=None, df=None):
+    def discriminator_step(self, real_cpu, disc_opt=False, zs=None, df=None):
         self.netD.zero_grad()
-        #print('discriminator step c=', c.ravel())
-        # train with real
+        
         label = torch.full((self.batchSize,), real_label, device=device)
         real_cpu = torch.unsqueeze(real_cpu, 1).float() # reshape for 1 channel images                        
-        output = self.netD(real_cpu, cond=c)
+        
+        if zs is not None:
+            output = self.netD(real_cpu, zfeatures=make_feature_maps(zs, output1shape, device))
+        else:
+            output = self.netD(real_cpu)
         errD_real = self.get_loss(output, opt, label=label)
         errD_real.backward()
         D_x = output.mean().item()
 
         # train with fake
-        noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
-        #print('fake draw ', c.ravel())
+        #noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
+        noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, 1, device=device)
+        if zs is not None:
+            fake_zs = np.random.choice(redshift_bins, opt.batchSize)
+            noise = torch.cat((noise, torch.from_numpy(fake_zs).float().view(-1,1,1,1,1).to(device)), 1)
+    
         fake = self.netG(noise)
         label.fill_(fake_label)
-        output = self.netD(fake.detach(), cond=c)
+        if zs is not None:
+            output = self.netD(fake.detach(), zfeatures=make_feature_maps(fake_zs, output1shape, device))
+        else:
+            output = self.netD(fake.detach(), cond=c)
+        
         errD_fake = self.get_loss(output, opt, label=label)
         errD_fake.backward()
 
@@ -258,14 +269,22 @@ class GAN_optimization():
 
     def generator_step(self, zs=None, df=None):
         
-        noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
-        #print('c:', c)
-        #print(noise)
+        #noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
+        noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, 1, device=device)
+        if zs is not None:
+            fake_zs = np.random.choice(redshift_bins, opt.batchSize)
+            noise = torch.cat((noise, torch.from_numpy(fake_zs).float().view(-1,1,1,1,1).to(device)), 1)
+
         fake = self.netG(noise)
         label = torch.full((self.batchSize,), real_label, device=device)
         self.netG.zero_grad()
         label.fill_(real_label)  # fake labels are real for generator cost  
-        output = self.netD(fake, cond=c)        
+
+        if zs is not None:
+            output = self.netD(fake, zfeatures=make_feature_maps(fake_zs, output1shape, device))
+        else:
+            output = self.netD(fake)
+        #output = self.netD(fake, cond=c)        
         errG = self.get_loss(output, opt, label=label)
         errG.backward()
         gnorm = compute_gradient_norm(self.netG)
@@ -273,13 +292,12 @@ class GAN_optimization():
         self.optimizerG.step()
         return errG, D_G_z2, gnorm
 
-    def single_train_step(self, real_cpu, disc_opt=False, zs=None, cparams=None, df=None):
+    def single_train_step(self, real_cpu, disc_opt=False, zs=None, df=None):
         if opt.acgd:
             loss_real, loss_fake = self.acgd_step(real_cpu, zs=zs, c=cparams, df=df)
             return loss_real, loss_fake
         else:
-            #print('cparams is ', cparams)
-            errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, disc_opt=disc_opt, zs=zs, c=cparams, df=df)
+            errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, disc_opt=disc_opt, zs=zs, df=df)
             for i in xrange(opt.n_genstep):
                 errG, D_G_z2, gnorm = self.generator_step(zs=zs, df=df)
             if opt.get_optimal_discriminator:
@@ -296,25 +314,36 @@ def training_epoch(opt, ganopt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms
     while len(sim_idxs)>0:
         nbatch += 1
         dat, choice = draw_training_batch(sim_boxes, sim_idxs, opt)
+
+
         sim_idxs = np.array([x for x in sim_idxs if x not in choice])
         real_cpu = torch.from_numpy(np.array(dat)).to(device)
-        if cparam_list is not None:
-            cparams = cparam_list[choice]
-            if opt.get_optimal_discriminator:
-                errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, cparams=cparams, disc_opt=disc_opt, df=opt.df)
-            else:
-                if opt.acgd:
-                    loss_real, loss_fake = ganopt.single_train_step(real_cpu, cparams=cparams, df=opt.df)
-                else:
-                    errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, cparams=cparams, df=opt.df)
+
+        if opt.redshift_code:
+            zs = cparam_list[choice]
+            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs)
         else:
-            if opt.get_optimal_discriminator:
-                errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, disc_opt=disc_opt, df=opt.df)
-            else:
-                if opt.acgd:
-                    loss_real, loss_fake = ganopt.single_train_step(real_cpu, df=opt.df)
-                else:
-                    errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, df=opt.df)
+            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu)
+
+
+
+        #if cparam_list is not None:
+        #    cparams = cparam_list[choice]
+        #    if opt.get_optimal_discriminator:
+        #        errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, cparams=cparams, disc_opt=disc_opt, df=opt.df)
+        #    else:
+        #        if opt.acgd:
+        #            loss_real, loss_fake = ganopt.single_train_step(real_cpu, cparams=cparams, df=opt.df)
+        #        else:
+        #            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, cparams=cparams, df=opt.df)
+        #else:
+        #    if opt.get_optimal_discriminator:
+        #        errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, disc_opt=disc_opt, df=opt.df)
+        #    else:
+        #        if opt.acgd:
+        #            loss_real, loss_fake = ganopt.single_train_step(real_cpu, df=opt.df)
+        #        else:
+        #            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, df=opt.df)
         if opt.get_optimal_discriminator:
             print('errD:', errD.item(), 'D_G_z1:', D_G_z1, 'Dnorm:', dn)
         elif opt.acgd:
@@ -355,9 +384,7 @@ else:
     sim_boxes = load_in_simulations(opt)
     #sim_boxes *= -1.0 # tested this, doesn't make a difference on final results
     cparam_list = None
-    conds = None
-    print(type(sim_boxes), len(sim_boxes))
-
+    
 opt.himax = np.max(sim_boxes)
 print('maximum value is', opt.himax)
 if opt.loglike_a > 0.0:
@@ -378,9 +405,9 @@ print('min/max values:', np.min(sim_boxes), np.max(sim_boxes))
 gnorms, dnorms, lossGs, lossDs, weightG, weightD = [[] for x in xrange(6)]
 
 if opt.acgd:
-    ganopt = GAN_optimization(optimizer, optimizer, netD, netG, cond_params=cparam_list, conds=conds, optimizer=optimizer)
+    ganopt = GAN_optimization(optimizer, optimizer, netD, netG, cond_params=cparam_list, optimizer=optimizer)
 else:
-    ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG, cond_params=cparam_list, conds=conds)
+    ganopt = GAN_optimization(optimizerD, optimizerG, netD, netG, cond_params=cparam_list)
 
 
 
