@@ -11,8 +11,9 @@ import keras.activations as ka
 import keras.layers.advanced_activations as kla
 
 from .common_layers import *
+from .layernorm     import *
 
-def get_critic(input_shape, base_features=32, norm=None):
+def get_critic(input_shape, base_features=32, conv_kernel_size=(3,3,3), dropout=0.25, norm=None):
     """
 
     A simple critic.
@@ -22,32 +23,33 @@ def get_critic(input_shape, base_features=32, norm=None):
     input_state = kl.Input(shape=input_shape)
 
     #Input layer
-    x = kl.Conv3D(base_features, (3,3,3), padding='same', strides=2)(input_state)
+    x = kl.Conv3D(base_features, conv_kernel_size, padding='same', strides=2)(input_state)
     if norm=='batch':
         x = kl.BatchNormalization(momentum=0.8)(x)
     elif norm=='layer':
         x = LayerNormalization()(x)
     x = kla.LeakyReLU(alpha=0.2)(x)
-    x = kl.Conv3D(base_features*2, (3,3,3), padding='same', strides=2)(x)
+    x = kl.Conv3D(base_features*2, conv_kernel_size, padding='same', strides=2)(x)
     if norm=='batch':
         x = kl.BatchNormalization(momentum=0.8)(x)
     elif norm=='layer':
         x = LayerNormalization()(x)
     x = kla.LeakyReLU(alpha=0.2)(x)
-    x = kl.Conv3D(base_features*4, (3,3,3), padding='same', strides=2)(x)
+    x = kl.Conv3D(base_features*4, conv_kernel_size, padding='same', strides=2)(x)
     if norm=='batch':
         x = kl.BatchNormalization(momentum=0.8)(x)
     elif norm=='layer':
         x = LayerNormalization()(x)
     x = kla.LeakyReLU(alpha=0.2)(x)
-    x = kl.Conv3D(base_features*8, (3,3,3), padding='same', strides=1)(x)
+    x = kl.Conv3D(base_features*8, conv_kernel_size, padding='same', strides=1)(x)
     if norm=='batch':
         x = kl.BatchNormalization(momentum=0.8)(x)
     elif norm=='layer':
         x = LayerNormalization()(x)
         
     x = kla.LeakyReLU(alpha=0.2)(x)
-    x = kl.Dropout(0.25)(x)
+    if dropout is not None:
+        x = kl.Dropout(dropout)(x)
     x = kl.Flatten()(x)
     #Linear activation for the critic
     x = kl.Dense(units=1)(x)

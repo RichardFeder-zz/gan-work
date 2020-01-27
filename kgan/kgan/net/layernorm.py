@@ -1,6 +1,7 @@
 import keras.layers as kl
 import numpy as np
 import keras.backend as K
+import keras
 
 class LayerNormalization(kl.Layer):
 

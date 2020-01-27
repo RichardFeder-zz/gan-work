@@ -34,6 +34,7 @@ import keras.layers as kl
 import keras.models as km
 
 import tensorflow as tf
+import keras.backend as K
 
 def load_config(yaml_file):
 
@@ -75,7 +76,14 @@ if __name__ == '__main__':
     ############
     # HARDCODE #
     ############
-    n_critic = 5
+    try:
+        n_critic = int(config['train_config']['n_critic'])
+    except KeyError:
+        n_critic = 5
+    try:
+        gp_weight = int(config['train_config']['gp_weight'])
+    except KeyError:
+        gp_weight = 10
     n_samps = delta.shape[0]
 
     # One GPU for each rank
@@ -104,14 +112,20 @@ if __name__ == '__main__':
         critic = critic_module.get_critic(input_shape=image_shape+(1,), **critic_args)
 
         # Build the optimizer
-        op_args = {}
+        disc_op_args = {}
+        gen_op_args = {}
         for key, val in config['optimizer_config']['args'].iteritems():
             try:
-                op_args[key] = ast.literal_eval(val)
+                gen_op_args[key] = ast.literal_eval(val)
+                disc_op_args[key] = ast.literal_eval(val)
+                if key == 'decay': # Needs to be adjusted to n_critic
+                    gen_op_args[key] = gen_op_args[key] * n_critic
             except ValueError:
-                op_args[key] = val
+                gen_op_args[key] = val
+                disc_op_args[key] = val
 
-        optimizer = getattr(optimizers, config['optimizer_config']['name'])(**op_args)
+        gen_optimizer = getattr(optimizers, config['optimizer_config']['name'])(**gen_op_args)
+        disc_optimizer = getattr(optimizers, config['optimizer_config']['name'])(**disc_op_args)
 
         #-------------------------------
         # Construct Computational Graph
@@ -149,8 +163,8 @@ if __name__ == '__main__':
         critic_model.compile(loss=[wasserstein_loss,
                                    wasserstein_loss,
                                    partial_gp_loss],
-                             optimizer=optimizer,
-                             loss_weights=[1, 1, 10])
+                             optimizer=disc_optimizer,
+                             loss_weights=[1, 1, gp_weight])
         #-------------------------------
         # Construct Computational Graph
         #         for Generator
@@ -168,7 +182,7 @@ if __name__ == '__main__':
         valid = critic(img)
         # Defines generator model
         generator_model = km.Model(z_gen, valid)
-        generator_model.compile(loss=wasserstein_loss, optimizer=optimizer)
+        generator_model.compile(loss=wasserstein_loss, optimizer=gen_optimizer)
     
         #-------------------------------
         #        Ok now train
@@ -182,7 +196,24 @@ if __name__ == '__main__':
     
         d_hist = []
         g_hist = []
+
+        # Set learning rate schedule
+        lr_gamma       = float(config['optimizer_config']['lr_gamma'])
+        lr_sched_epoch = np.arange(0, nepochs, 5)
+        #lr_sched       = gen_op_args['lr']*lr_gamma**lr_sched_epoch 
+        
+
         for epoch in range(nepochs):
+
+            if lr_gamma < 1.0:
+                print("Applying lr schedule: ",)
+                # Apply the learning rate schedule
+                if epoch in lr_sched_epoch:
+                    #lsei = list(lr_sched_epoch).index(epoch)
+                    lr = K.get_value(critic_model.optimizer.lr)
+                    K.set_value(critic_model.optimizer.lr, lr*lr_gamma)
+                    K.set_value(generator_model.optimizer.lr, lr*lr_gamma)
+
     
             choice = np.arange(n_samps)
             np.random.shuffle(choice)
@@ -233,11 +264,11 @@ if __name__ == '__main__':
                 #colorbar()
                 #display.display(gcf())
         
-            if (epoch in [5, 10, 15]) or (epoch > 15):
+            if (epoch in [5, 9, 11, 15, 17, 19, 21, 25, 30, 33]) or (epoch >= 35):
                 # Checkpoint the generator
-                generator_model.save(config['save_model'] + '-%03d' % epoch)
+                generator.save(config['save_model'] + '-%03d' % epoch)
 
         # Save the history
         with h5py.File(config['save_history']) as hfile:
-            hfile.create_dataset('g_loss', g_loss)
-            hfile.create_dataset('d_loss', d_loss)
+            hfile.create_dataset('g_loss', data=np.array(d_hist))
+            hfile.create_dataset('d_loss', data=np.array(g_hist))

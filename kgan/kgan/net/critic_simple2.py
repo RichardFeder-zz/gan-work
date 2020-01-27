@@ -12,7 +12,7 @@ import keras.layers.advanced_activations as kla
 
 from .common_layers import *
 
-def get_critic2(input_shape, base_features=32, norm=None):
+def get_critic(input_shape, base_features=32, norm=None):
     """
 
     The critic proposed in https://arxiv.org/abs/1903.10524.
