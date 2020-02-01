@@ -126,45 +126,44 @@ def plot_diag(base_path, timestring, mode='grad_norm', epoch=None, save=False, s
     if show:
         plt.show()
     return f
+def plot_bispectra(k1, k2, genbks=[], thetabins=[], labels=[], colors=['royalblue', 'darkgreen', 'darkslategrey'], reallabel='GADGET-2', realbk=None, realthetabins=[],timestr=None, \
+                    z=None, title=None, mode='median', ymin=1.5e5, ymax=1.5e7, \
+                    realcolor='forestgreen', realfillcolor='limegreen', alpha_real=0.45, alpha_gen=0.1, \
+                    reallinewidth=2., genlinewidth=2., legend_fs=14, k_fs=12, label_fs=14, figsize=(8,6)):
+    fig, (ax) = plt.subplots(1, 1, figsize=figsize)                                                                                                                                    
 
-
-def plot_bispectra(k1, k2, genbks=[], thetabins=[], labels=[], reallabel='GADGET-2', realbk=None, realthetabins=[],timestr=None, \
-                    z=None, title=None, mode='median', ymin=1.5e5, ymax=1.5e7):
-    fig, (ax) = plt.subplots(1, 1, figsize=(8,6))
-#     plt.subplot(1,2,1)
-    colors = ['darkslategrey', 'royalblue','m', 'maroon']
     if realbk is not None:
-        plt.fill_between(realthetabins, np.percentile(realbk, 16, axis=0), np.percentile(realbk, 84, axis=0), \
-\
-facecolor='green', alpha=0.4)
-        plt.plot(realthetabins, np.median(realbk, axis=0), label=reallabel, color='forestgreen', marker='.')
-        plt.plot(realthetabins, np.mean(realbk, axis=0), color='forestgreen', marker='.', linestyle='dashed')
+        plt.fill_between(realthetabins, np.percentile(realbk, 16, axis=0), np.percentile(realbk, 84, axis=0), facecolor=realfillcolor, alpha=alpha_real)
+        if mode=='median':
+            plt.plot(realthetabins, np.median(realbk, axis=0), label=reallabel, color=realcolor, marker='.', linewidth=reallinewidth)
+        else:
+            plt.plot(realthetabins, np.mean(realbk, axis=0), color='forestgreen', marker='.', linestyle='dashed')
 
-        plt.plot(realthetabins, np.percentile(realbk, 16, axis=0), color='forestgreen')
-        plt.plot(realthetabins, np.percentile(realbk, 84, axis=0), color='forestgreen')
+        plt.plot(realthetabins, np.percentile(realbk, 16, axis=0), color=realcolor, linewidth=reallinewidth)
+        plt.plot(realthetabins, np.percentile(realbk, 84, axis=0), color=realcolor, linewidth=reallinewidth)
 
     if len(genbks)>0:
         for i, genbk in enumerate(genbks):
-            plt.fill_between(thetabins[i], np.percentile(genbk, 16, axis=0), np.percentile(genbk, 84, axis=0),\
-\
- alpha=0.2, color=colors[i])
-            plt.plot(thetabins[i], np.median(genbk, axis=0), label=labels[i], marker='.', color=colors[i])
-            plt.plot(thetabins[i], np.mean(genbk, axis=0), marker='.', color=colors[i], linestyle='dashed')
+            plt.fill_between(thetabins[i], np.percentile(genbk, 16, axis=0), np.percentile(genbk, 84, axis=0), alpha=alpha_gen, color=colors[i])
+            if mode=='median':
+                plt.plot(thetabins[i], np.median(genbk, axis=0), label=labels[i], marker='.', color=colors[i], linewidth=genlinewidth)
+            else:
+                plt.plot(thetabins[i], np.mean(genbk, axis=0), marker='.', color=colors[i], linestyle='dashed')
 
-            plt.plot(thetabins[i], np.percentile(genbk, 16, axis=0), linewidth=0.75, color=colors[i])
-            plt.plot(thetabins[i],  np.percentile(genbk, 84, axis=0), linewidth=0.75, color=colors[i])
+            plt.plot(thetabins[i], np.percentile(genbk, 16, axis=0), color=colors[i], linewidth=genlinewidth)
+            plt.plot(thetabins[i],  np.percentile(genbk, 84, axis=0),  color=colors[i], linewidth=genlinewidth)
 
+    plt.legend(loc=1, fontsize=legend_fs, frameon=False)                                                                                                                                     
 
-    plt.legend(loc=1, fontsize=14, frameon=False)
-    plt.xlabel('$\\theta$ [radian]', fontsize=14)
-    plt.ylabel('$B(\\theta)$ $[h^{-6} Mpc^6]$', fontsize=14)
+    plt.xlabel('$\\theta$ [radian]', fontsize=label_fs)
+    plt.ylabel('$B(\\theta)$ $[h^{-6} Mpc^6]$', fontsize=label_fs)
     plt.yscale('log')
     plt.ylim(ymin, ymax)
 
-    
-    plt.text(0.1, 10**(np.log10(ymax)-0.2),'$k_1=$'+str(k1), fontsize=16)
-    plt.text(0.1, 10**(np.log10(ymax)-0.35),'$k_2=$'+str(k2), fontsize=16)
-    
+
+    plt.text(0.1, 10**(np.log10(ymax)-0.35),'$k_1=$'+str(k1), fontsize=k_fs)
+    plt.text(0.1, 10**(np.log10(ymax)-0.6),'$k_2=$'+str(k2), fontsize=k_fs)
+
     plt.tight_layout()
     if timestr is not None:
         plt.savefig('figures/gif_dir/'+timestr+'/bispectra_'+str(k1)+'_'+str(k2)+'.pdf', bbox_inches='tight')
@@ -172,34 +171,34 @@ facecolor='green', alpha=0.4)
 
     return fig
 
-def plot_powerspectra(genpks=[], genkbins=[], labels=[],reallabel='GADGET-2',realpk=None, realkbins=None, frac=False, timestr=None, z=None, title=None, colors=None, mode='median'):
+def plot_powerspectra(genpks=[], genkbins=[], labels=[],reallabel='GADGET-2', \
+                       realpk=None, realkbins=None, frac=False, timestr=None, z=None, \
+                       title=None, colors=None, mode='median', realcolor='forestgreen',\
+                       frac_median=True, frac_mean=True, alpha_real=0.6, alpha_gen=0.2, realfillcolor='limegreen'):
 
     if title is None:
         title = 'Comparison of power spectra with 1$\\sigma$ shaded regions'
     if colors is None:
         colors = ['darkslategrey', 'royalblue','m', 'maroon']
-    
+
     fig, (ax) = plt.subplots(1,1, figsize=[8,6])
-                                                                                                     
+
     if z is not None:
         title += ', z='+str(z)
 
     if realpk is not None:
-        ax.fill_between(realkbins, np.percentile(realpk, 16, axis=0), np.percentile(realpk, 84, axis=0), facecolor='green', alpha=\
-0.4)
+        ax.fill_between(realkbins, np.percentile(realpk, 16, axis=0), np.percentile(realpk, 84, axis=0), facecolor=realfillcolor, alpha=alpha_real)
         if mode=='median':
-            ax.plot(realkbins, np.median(realpk, axis=0), label=reallabel, color='forestgreen', marker='.')
+            ax.plot(realkbins, np.median(realpk, axis=0), label=reallabel, color=realcolor, marker='.')
         elif mode=='mean':
-            ax.plot(realkbins, np.mean(realpk, axis=0), label=reallabel, color='forestgreen', marker='.')
-        ax.plot(realkbins, np.percentile(realpk, 16, axis=0), color='forestgreen')
-        ax.plot(realkbins, np.percentile(realpk, 84, axis=0), color='forestgreen')
+            ax.plot(realkbins, np.mean(realpk, axis=0), label=reallabel, color=realcolor, marker='.')
+        ax.plot(realkbins, np.percentile(realpk, 16, axis=0), color=realcolor)
+        ax.plot(realkbins, np.percentile(realpk, 84, axis=0), color=realcolor)
 
     if len(genpks)>0:
         print(len(genpks))
         for i, genpk in enumerate(genpks):
-            print(colors[i])
-            print(labels[i])
-            ax.fill_between(genkbins[i], np.percentile(genpk, 16, axis=0), np.percentile(genpk, 84, axis=0), alpha=0.2, color=colors[i])
+            ax.fill_between(genkbins[i], np.percentile(genpk, 16, axis=0), np.percentile(genpk, 84, axis=0), alpha=alpha_gen, color=colors[i])
             if mode=='median':
                 ax.plot(genkbins[i], np.median(genpk, axis=0), label=labels[i], marker='.', color=colors[i])
             elif mode=='mean':
@@ -214,63 +213,70 @@ def plot_powerspectra(genpks=[], genkbins=[], labels=[],reallabel='GADGET-2',rea
     plt.ylabel('P(k) [$h^{-3}$$Mpc^3$]', fontsize=16)
     if timestr is not None:
         plt.savefig('figures/gif_dir/'+timestr+'/power_spectra.pdf', bbox_inches='tight')
-    
-    
+
+
     if frac:
         axins = inset_axes(ax, width=2.5, height=1.5, loc=2, bbox_to_anchor=(130.0, 200.5, 0.5, 0.5))
 
         axins.set(title='Fractional deviation', ylim=(1e-3, 2e0), xscale='log', yscale='log')
         axins.set_ylabel('$P_{gen}(k)/P_{real}(k)$-1', fontsize=12)
         for i, genpk in enumerate(genpks):
-        
+
             frac_diff_pk = np.abs((np.median(genpk, axis=0)/np.median(realpk, axis=0))-1)
             frac_diff_pk2 = np.abs((np.mean(genpk, axis=0)/np.mean(realpk, axis=0))-1)
-            
-            axins.plot(realkbins, frac_diff_pk, marker='.', label='Median', color='darkslategrey', linestyle='solid')
-            axins.plot(realkbins, frac_diff_pk2, marker='.', label='Mean', color='darkslategrey', linestyle='dashed')
-            
-        axins.legend(loc=3, frameon=False)
+            if frac_median:
+                axins.plot(realkbins, frac_diff_pk, marker='.', label='Median', color='darkslategrey', linestyle='dashed')
+            if frac_mean:
+                axins.plot(realkbins, frac_diff_pk2, marker='.', label='Mean', color='darkslategrey', linestyle='solid')
+            if frac_median or frac_mean:
+                axins.legend(loc=3, frameon=False)
 
     plt.tight_layout()
     plt.show()
 
     return fig
 
-def plot_voxel_pdf(real_vols=None, gen_vols=None, nbins=49, mode='scaled', timestr=None, epoch=None, gen_vols2=None, reallabel='GADGET-2', genlabel='GAN', gen2label=None, show=True, capsize=5):
+def plot_voxel_pdf(real_vols=None, gen_vols=None, nbins=49, mode='scaled', \
+                    timestr=None, epoch=None, reallabel='GADGET-2', genlabels=['GAN'], realcolor='green', gencolors=['b', 'royalblue'], \
+                    show=True, capsize=5):
+    
+    
     f = plt.figure(figsize=(8,6))
+    
     if mode=='scaled':
-        bins = np.linspace(-1, 1, 50)
+        bins = np.linspace(-1, 1, nbins+1)
     else:
-        bins = 10**(np.linspace(-4, 4, 50))
+        bins = 10**(np.linspace(-4, 4, nbins+1))
     midbins = 0.5*(bins[1:]+bins[:-1])
 
     if real_vols is not None:
-
+        
         voxel_hists = np.array([np.histogram(real_vols[i], bins=bins)[0] for i in range(real_vols.shape[0])])
-        print(np.mean(voxel_hists, axis=0).shape)
-        plt.errorbar(midbins, np.mean(voxel_hists, axis=0)/real_vols.shape[0], yerr=np.std(voxel_hists, axis=0)/real_vols.shape[0], label=reallabel, color='g', capsize=capsize)
-        maxval = np.max(real_vols[0])
+        plt.errorbar(midbins, np.mean(voxel_hists, axis=0)/(real_vols.shape[0]), yerr=np.std(voxel_hists, axis=0)/real_vols.shape[0], label=reallabel, color=realcolor, capsize=capsize, elinewidth=2, capthick=2)
+    
     if gen_vols is not None:
+        
         if real_vols is not None:
             binz = bins
         else:
             binz = nbins
-        gen_voxel_hists = np.array([np.histogram(gen_vols[i], bins=bins)[0] for i in range(gen_vols.shape[0])])
-        plt.errorbar(midbins, np.mean(gen_voxel_hists, axis=0)/gen_vols.shape[0], yerr=np.std(gen_voxel_hists, axis=0)/gen_vols.shape[0], label=genlabel, color='b', capsize=capsize)
-        maxval = np.max(gen_vols[0])
-        if gen_vols2 is not None:
-            gen2_voxel_hists = np.array([np.histogram(gen_vols2[i], bins=bins)[0] for i in range(gen_vols2.shape[0])])
-            plt.errorbar(midbins, np.mean(gen2_voxel_hists, axis=0)/gen_vols2.shape[0], yerr=np.std(gen2_voxel_hists, axis=0)/gen_vols2.shape[0], label=gen2label, color='b', capsize=capsize)
-
+        
+        for k in range(len(gen_vols)):
+            print(gen_vols[k].shape[0])
+            gen_voxel_hists = np.array([np.histogram(gen_vols[k][i], bins=bins)[0] for i in range(gen_vols[k].shape[0])])
+            plt.errorbar(midbins, np.mean(gen_voxel_hists, axis=0)/(gen_vols[k].shape[0]), yerr=np.std(gen_voxel_hists, axis=0)/gen_vols[k].shape[0], capthick=2, label=genlabels[k], color=gencolors[k], capsize=capsize)
+        
     plt.yscale('log')
+    
     if mode=='scaled':
         plt.xlabel('Scaled Density $s(x)$', fontsize=14)
     else:
         plt.xlabel('Matter Density $x$', fontsize=14)
         plt.xscale('log')
 
-    plt.legend(fontsize=14, frameon=False)
+    plt.legend(fontsize=14, frameon=False, loc=1)
     plt.ylabel('Normalized Counts', fontsize=14)
+    
     if timestr is not None:
         plt.savefig('figures/gif_dir/'+timestr+'/voxel_pdf_epoch'+str(epoch)+'.pdf', bbox_inches='tight')
     if show:
@@ -485,15 +491,20 @@ def plot_data_scalings(mode='loglike', a_range=[1, 4, 10, 50], eps=None, lin=Non
 
     return f
 
-def plot_average_density_hist(avmass_real=None, avmass_gen=None, show=True, alpha_real=0.8, alpha_gen=0.8, reallabel='GADGET-2'):
+def plot_average_density_hist(avmass_real=None, avmass_gen=None, show=True, labels=['GAN'], colors=['darkslategrey', 'royalblue'], alpha_real=0.8, alpha_gen=0.8, reallabel='GADGET-2', realcolor='forestgreen', median_lines=False, linewidth=1.0):
     bins = None
-    f = plt.figure()
+    f = plt.figure(figsize=(8,6))
     if avmass_real is not None:
-        _, bins, _ = plt.hist(np.log10(avmass), bins=20, label=reallabel, color='forestgreen',alpha=alpha_real, density=True)
+        _, bins, _ = plt.hist(np.log10(avmass_real), bins=20, label=reallabel, histtype='step',linewidth=linewidth, color=realcolor,alpha=alpha_real, density=True)
+        if median_lines:
+            plt.axvline(np.median(np.log10(avmass_real)), color=realcolor, linestyle='dashed')
     if avmass_gen is not None:
         if bins is None:
             bins = 20
-        plt.hist(np.log10(avmass_gen), bins=bins, label='GAN', color='royalblue', alpha=alpha_gen, density=True)
+        for i, avmass in enumerate(avmass_gen):
+            plt.hist(np.log10(avmass), bins=bins, label=labels[i], color=colors[i],linewidth=linewidth, alpha=alpha_gen, density=True, histtype='step')
+            if median_lines:
+                plt.axvline(np.median(np.log10(avmass)), color=colors[i], linestyle='dashed')
     plt.xlabel('$\\log_{10}(\overline{\\rho})$', fontsize=14)
     plt.legend(fontsize=14, frameon=False)
     plt.ylabel('Probablility Density', fontsize=14)

@@ -518,12 +518,12 @@ def compute_matter_bispectrum(vols, cubedim=64, k1=0.1, k2=0.5):
             bks.append(bis.B)
     return bks, thetas
 
-def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncond=0,\
+def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncond=0, single_z_idx=9, \
                   use_realdat=True, load_discriminator=False, opt_disc_epoch=-1, extra_conv_layers=0, \
                   plot_all=False, plot_loss=False, plot_gradnorm=False, network_weights=False, unscaled_voxel_pdf=False, scaled_voxel_pdf=False, average_density=False, \
                   power_spec=False, mode='median', covariance=False, correlation=False, cross_spec=False, \
                   bispectrum=False, k1=0.2, k2=0.2,  \
-                  workdir ='/work/06224/rfederst/maverick2/', print_pdict=True, sizes=np.array([8., 4., 2., 1.]), discriminator_output=False, labels=None, colors=['royalblue']):
+                  workdir ='/work/06224/rfederst/maverick2/', print_pdict=True, sizes=np.array([8., 4., 2., 1.]), discriminator_output=False, labels=None, colors=['royalblue'], bs_ymin=1e6, bs_ymax=1e8, frac_mean=True, frac_median=True):
     if use_realdat:
         realdat = np.array(nbody.datasims[-nsamp:])
     
@@ -625,10 +625,10 @@ def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncon
                 kbinz, pkz = filter_nan_pk(kbins, pks)
             
                 f_powerspectra = plot_powerspectra(realpk=pks, realkbins=kbins,reallabel='GADGET-2 ($z=$'+str(var)+')', \
-                                                   genpks=[pk], genkbins=[kbin], labels=labels[i],mode=mode,frac=True, colors=[colors[i]])
+                                                   genpks=[pk], genkbins=[kbin], labels=labels[i],mode=mode,frac=True, colors=[colors[i]], frac_median=frac_median, frac_mean=frac_mean)
                 
             else:
-                f_powerspectra = plot_powerspectra(genpks=[pk], genkbins=[kbin], labels=labels[i],mode=mode,frac=False, colors=[colors[i]])
+                f_powerspectra = plot_powerspectra(genpks=[pk], genkbins=[kbin], labels=labels[i],mode=mode,frac=False, colors=[colors[i]], frac_median=frac_median, frac_mean=frac_mean)
                
             figs, fig_key = add_figure_key(f_powerspectra, figs, key='Power spectrum (z='+str(var)+')', key_list=fig_key)
                 
@@ -637,7 +637,7 @@ def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncon
                 cov_gen = compute_covariance_matrix(kbinz_gen, pkz_gen, pkz_gen)
                 cov_real = compute_covariance_matrix(kbinz, pkz, pkz)
                 
-                fcov = plot_corr_cov_matrices(cov_real, cov_gen, mode='cov', vmax=0.9, kbins=kbinz)
+                fcov = plot_corr_cov_matrices(cov_real, cov_gen, mode='cov', vmax=0.8, kbins=kbinz)
                 figs, fig_key = add_figure_key(fcov, figs, key='Covariance matrix (z='+str(var)+')', key_list=fig_key)
 
             if correlation:
@@ -671,7 +671,7 @@ def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncon
             with open('npoint_stats/bispectra_thetas.pkl', 'r') as f:
                 thetas = pickle.load(f)
                 
-            f_bispectra = plot_bispectra(k1, k2, genbks=[bk], thetabins=[ts], labels=[labels[i]], realbk=bks, realthetabins=thetas)
+            f_bispectra = plot_bispectra(k1, k2, genbks=[bk], thetabins=[ts], labels=[labels[i]], realbk=bks, realthetabins=thetas, ymin=bs_ymin, ymax=bs_ymax, realfillcolor='forestgreen')
             figs, fig_key = add_figure_key(f_bispectra, figs, key='Bispectrum (z='+str(var)+')', key_list=fig_key)
 
         list_of_figs.append(figs)
