@@ -22,7 +22,7 @@ if sys.platform=='darwin':
     matplotlib.use('tkAgg')
 elif sys.platform=='linux2':
     #base_dir = '/home1/06224/rfederst/gan-work/results/'
-    base_dir = '/work/06224/rfederst/maverick2/results/'
+    base_dir = '/work/06147/pberger/maverick2/results/'
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 

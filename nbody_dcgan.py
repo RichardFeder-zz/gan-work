@@ -6,7 +6,7 @@ import os
 import random
 import torch
 torch.backends.cudnn.benchmark = True
-from optimizers import ACGD
+#from optimizers import ACGD
 #from cgd_utils import zero_grad
 import time
 import torch.nn as nn
@@ -25,13 +25,14 @@ from plotting_fns import *
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 opt = get_parsed_arguments('nbody')
 
-richard_workdir = '/work/06224/rfederst/maverick2/results/'
+richard_workdir = '/work/06147/pberger/maverick2/results/'
 
 if not torch.cuda.is_available():
     opt.cuda=False
     
 device = torch.device("cuda:0" if opt.cuda else "cpu")
-nc = 1 # just one channel for images                                                                                                                
+nc = 1 # just one channel for images                                                 
+
 real_label = 1
 fake_label = 0
 n_cond_params = 0
@@ -125,8 +126,10 @@ print(netD)
 # Set loss                                                                                                                                           
 criterion = nn.BCELoss()
 print('device:', device)
-if opt.acgd:
-    optimizer = ACGD(max_params=netG, min_params=netD, lr=opt.lr_g, device=device)
+if False:
+#if opt.acgd:
+#    optimizer = ACGD(max_params=netG, min_params=netD, lr=opt.lr_g, device=device)
+    pass
 
 else:                                                                         
     optimizerD = optim.Adam(netD.parameters(), lr=opt.lr_d, betas=(opt.b1, opt.b2))
@@ -432,7 +435,7 @@ if opt.get_optimal_discriminator:
         print
         lossGs, lossDs, gnorms, dnorms, ganopt = training_epoch(opt, ganopt, opt.n_epochs+i, sim_boxes, lossGs, lossDs, gnorms, dnorms, weightG, weightD, disc_opt=True)
         save_nn(ganopt.netD, richard_workdir+opt.netG+'/netD_optimal_epoch_'+str(i))
-        
+
 #save_nn(ganopt.netD, new_dir+'/netD_optimal')
 save_nn(ganopt.netD, richard_workdir+opt.netG+'/netD_optimal')
 

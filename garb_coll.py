@@ -3,7 +3,7 @@ from helpers import *
 if sys.platform=='darwin':
     basedir = '/Users/richardfeder/Documents/caltech/gan_work/results/'
 elif sys.platform=='linux2':
-    basedir = '/home1/06224/rfederst/gan-work/results/'
+    basedir = '/work/06147/pberger/maverick2/results/'
 
 def garb_coll():
     n=0
