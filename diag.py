@@ -86,71 +86,7 @@ class nbody_dataset():
         return allgenpks, allgenks, allrealpks, allrealks
 
 
-    def discriminator_rejection_sampling(self, generator, discriminator, pdict, batch_size=\
-32, eps=0.01, gamma=0, n_samp=0, n_conditional=0, dmstar_n_samp=200, ngpu=1, redshift=None)\
-:
-
-        n = 0
-        counter = 0
-        gen_samps = []
-        device = torch.device("cuda:0")
-        print 'Estimating D_M*...'
-        # estimate dm_star                                                                  
-        z = torch.randn(dmstar_n_samp, pdict['latent_dim']+n_conditional, 1, 1, 1, device=self.device).float()
-        output1shape = (pdict['cubedim']/2, pdict['cubedim']/2, pdict['cubedim']/2)
-        print 'output1shape:', output1shape
-
-        if redshift is not None:
-            z[:,-1] = redshift
-
-        gensamps = generator(z)
-        if redshift is not None:
-            discriminator_outs = discriminator(gensamps, cond_features=make_feature_maps(z[\
-:,-1].cpu(), output1shape, device)).cpu().detach().numpy()
-
-        else:
-            discriminator_outs = discriminator(gensamps).cpu().detach().numpy()
-        disc_logit_outs = -np.log((1./discriminator_outs)-1)
-        dm_star = np.max(disc_logit_outs)
-
-
-        while n<n_samp:
-            z = torch.randn(batch_size, pdict['latent_dim']+n_conditional, 1, 1, 1, device=\
-self.device).float()
-
-            if redshift is not None:
-                z[:,-1] = redshift
-
-            gensamps = generator(z)
-
-            if redshift is not None:
-                discriminator_outputs = discriminator(gensamps, cond_features=make_feature_maps(z[:,-1].cpu(), output1shape, device)).cpu().detach().numpy()
-            else:
-                discriminator_outputs = discriminator(gensamps).cpu().detach().numpy()
-            disc_logit_outputs = -np.log((1./discriminator_outputs)-1)
-            fs = disc_logit_outputs - dm_star - np.log(1-np.exp(disc_logit_outputs-dm_star-\
-eps))-gamma
-            acceptance_probs = 1./(1+np.exp(-fs))
-            rand = np.random.uniform(size=len(acceptance_probs))
-            accept = rand<acceptance_probs
-            if np.sum(accept)>0:
-                gensamps = gensamps.cpu().detach().numpy()[accept]
-                for samp in gensamps:
-                    gen_samps.append(samp)
-                n += np.sum(accept)
-                print('n + '+str(np.sum(accept)), 'n='+str(n))
-
-            counter += 1
-            if counter > 100:
-                print('counter overload!!!')
-                return np.array(gen_samps)
-        return np.array(gen_samps)
-
-
-
-    def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None, discriminator=None, sigma=1, df=None):
-
-
+    def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None, discriminator=None, sigma=1, df=None, return_z=False):
 
         if df is not None:
             z = sigma*torch.distributions.StudentT(scale=sigma,df=df).rsample(sample_shape=(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1)).float().to(self.device)
@@ -168,7 +104,13 @@ eps))-gamma
         gensamps = generator(z)
         if discriminator is not None:
             disc_outputs = discriminator(gensamps)
-            return gensamps.detach().numpy(), disc_outputs.detach().numpy()
+            if return_z:
+                return gensamps.cpu().detach().numpy(), disc_outputs.cpu().detach().numpy(), z.cpu().detach().numpy()
+            else:
+                return gensamps.cpu().detach().numpy(), disc_outputs.cpu().detach().numpy()
+        if return_z:
+            return gensamps.cpu().detach().numpy(), z.cpu().detach().numpy()
+        
         return gensamps.cpu().detach().numpy()
 
     def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None, idxs=None, ds_factor=1, fac=1):
@@ -679,3 +621,77 @@ def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncon
             
             
     return list_of_figs, list_of_fig_keys
+
+
+
+def compute_distribution_of_latent_z(zsamps, norm_p = 2., mode='norm'):
+    norms = []
+    print(zsamps.shape)
+    print('mode=', mode)
+    if mode=='norm':
+        print('Calculating latent vector norm with p=', norm_p)
+    for samp in zsamps:
+        if mode=='norm':
+            norms.append(np.power(np.sum(np.abs(samp)**norm_p), 1./norm_p))
+        elif mode=='max':
+            norms.append(np.max(samp))
+        elif mode=='min':
+            norms.append(np.min(samp))
+        elif mode=='absmax':
+            norms.append(np.max(np.abs(samp)))
+           
+    return norms
+
+
+def discriminator_rejection_sampling(generator, discriminator, pdict, df=None, sigma=1.0, \
+                                     batch_size=32, eps=0.01, gamma=0, n_samp=0, n_conditional=0, \
+                                     dmstar_n_samp=200, ngpu=1, redshift=None, max_counter=100):
+
+    n = 0
+    counter = 0
+    gen_samps, z_samps = [], []
+    accept_frac = []
+
+    device = torch.device("cuda:0")
+    print 'Estimating D_M*...'
+    # estimate dm_star  
+    
+    nbody = nbody_dataset()
+    gensamps, discriminator_outs = nbody.get_samples(generator, dmstar_n_samp, pdict, discriminator=discriminator, n_conditional=n_conditional, sigma=sigma, df=pdict['df'])
+
+    disc_logit_outs = -np.log((1./discriminator_outs)-1)
+    dm_star = np.max(disc_logit_outs)
+        
+    while n<n_samp:
+        with HiddenPrints():
+            gensamps, discriminator_outs, z_proposed = nbody.get_samples(generator, batch_size, pdict, discriminator=discriminator, n_conditional=n_conditional, sigma=sigma, df=pdict['df'], return_z=True)
+        
+        disc_logit_outputs = -np.log((1./discriminator_outs)-1)
+        fs = disc_logit_outputs - dm_star - np.log(1-np.exp(disc_logit_outputs-dm_star-eps))-gamma
+        acceptance_probs = 1./(1+np.exp(-fs))
+        rand = np.random.uniform(size=len(acceptance_probs))
+        accept = rand<acceptance_probs
+        
+        accept_frac.append(float(np.sum(accept))/float(batch_size))
+
+        if np.sum(accept)>0:
+            gensamps = gensamps[accept]
+            zsamps = z_proposed[accept]
+            
+            for i, samp in enumerate(gensamps):
+                gen_samps.append(samp)
+                z_samps.append(zsamps[i])
+            
+            n += np.sum(accept)
+            print('n + '+str(np.sum(accept)), 'n='+str(n), 'accept frac = ', float(np.sum(accept))/float(batch_size))
+            counter += 1
+            if counter > max_counter:
+                print('counter overload!!!')
+                return np.array(gen_samps), np.array(z_samps)
+            
+    print('counter is ', counter)
+    
+    print('Mean acceptance fraction is ', np.mean(accept_frac))
+    
+    return np.array(gen_samps), np.array(z_samps)
+

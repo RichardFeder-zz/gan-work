@@ -646,3 +646,67 @@ def plot_volume_gif_multiple_z(gen, frame_dir = 'figures/frame_dir', minz=0.0, m
     print('Converting to gif..')
     convert_png_to_gif(nz, gifdir=frame_dir, fps=fps)
     return volume_frames
+
+def plot_gan_real_drs_samps(gen_samps, real_samps, drs_samps, kbins=None, thetas=None, alpha=0.1,\
+                            all_in_one=False, colors=['forestgreen', 'royalblue'], ymax=1e5):
+    
+        
+    f = plt.figure(figsize=(12,6))
+    plt.subplot(1,3,1)
+    plt.title('GAN', fontsize=20)
+    if kbins is not None:
+        for i, genpk in enumerate(gen_samps):
+            plt.plot(kbins, genpk, c='b', alpha=alpha)
+    elif thetas is not None:
+        for i, genbk in enumerate(gen_samps):
+            plt.plot(thetas, genbk, c='b', alpha=alpha)
+            
+    plt.yscale('log')
+    plt.ylim(1e5,1e10)
+
+    if kbins is not None:
+        plt.xscale('log')
+        plt.ylim(1, ymax)
+        plt.xlabel('$k$', fontsize=16)
+        plt.ylabel('$P(k)$', fontsize=16)
+            
+    plt.subplot(1,3,2)
+    plt.title('GADGET-2', fontsize=20)
+    if kbins is not None:
+        for i, realpk in enumerate(real_samps):
+            plt.plot(kbins, realpk, c='b', alpha=alpha)
+    elif thetas is not None:
+        for i, realbk in enumerate(real_samps):
+            plt.plot(thetas, realbk, c='b', alpha=alpha)
+            
+    plt.yscale('log')
+    plt.ylim(1e5,1e10)
+
+    if kbins is not None:
+        plt.xscale('log')
+        plt.ylim(1, ymax)
+        plt.xlabel('$k$', fontsize=16)
+        plt.ylabel('$P(k)$', fontsize=16)
+            
+    plt.subplot(1,3,3)
+    plt.title('DRS', fontsize=20)
+    if kbins is not None:
+        for i, drs_pk in enumerate(drs_samps):
+            plt.plot(kbins, drs_pk, c='b', alpha=alpha)
+    elif thetas is not None:
+        for i, drs_bk in enumerate(drs_samps):
+            plt.plot(thetas, drs_bk, c='b', alpha=alpha)
+            
+    plt.yscale('log')
+    plt.ylim(1e5,1e10)
+
+    if kbins is not None:
+        plt.xscale('log')
+        plt.ylim(1, ymax)
+        plt.xlabel('$k$', fontsize=16)
+        plt.ylabel('$P(k)$', fontsize=16)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return f
