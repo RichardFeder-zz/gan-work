@@ -235,7 +235,7 @@ class GAN_optimization():
         if zs is not None:
             output = self.netD(fake.detach(), zfeatures=make_feature_maps(fake_zs, output1shape, device))
         else:
-            output = self.netD(fake.detach(), cond=c)
+            output = self.netD(fake.detach())
         
         errD_fake = self.get_loss(output, opt, label=label)
         errD_fake.backward()
