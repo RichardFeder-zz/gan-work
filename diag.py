@@ -86,7 +86,7 @@ class nbody_dataset():
         return allgenpks, allgenks, allrealpks, allrealks
 
 
-    def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None, discriminator=None, sigma=1, df=None, return_z=False):
+    def get_samples(self, generator, nsamp, pdict, n_conditional=0, c=None, discriminator=None, sigma=1, df=None, return_z=False, feat_from_last=0):
 
         if df is not None:
             z = sigma*torch.distributions.StudentT(scale=sigma,df=df).rsample(sample_shape=(nsamp, pdict['latent_dim']+n_conditional, 1, 1, 1)).float().to(self.device)
@@ -100,8 +100,12 @@ class nbody_dataset():
             #for i in xrange(n_conditional):
                 #print(c[i])
                 #z[:,-i] = c[i]
-            #z[:,-1] = c                                                                    
-        gensamps = generator(z)
+            #z[:,-1] = c       
+        if feat_from_last > 0:
+            feature_maps, gensamps = generator(z, feat_from_last=feat_from_last)
+            return feature_maps.cpu().detach().numpy(), gensamps.cpu().detach().numpy()
+        else:
+            gensamps = generator(z)
         if discriminator is not None:
             disc_outputs = discriminator(gensamps)
             if return_z:
@@ -111,6 +115,7 @@ class nbody_dataset():
         if return_z:
             return gensamps.cpu().detach().numpy(), z.cpu().detach().numpy()
         
+
         return gensamps.cpu().detach().numpy()
 
     def load_in_sims(self, nsims, loglike_a=None, redshift_idxs=None, idxs=None, ds_factor=1, fac=1):
@@ -239,14 +244,17 @@ class nbody_dataset():
             plt.savefig('figures/gif_dir/'+timestr+'/multiz_pk_epoch'+str(epoch)+'.pdf', bbox_inches='tight')
         plt.show()
             
-    def restore_generator(self, timestring, epoch=None, n_condparam=0, extra_conv_layers=0, discriminator=False):
+    def restore_generator(self, timestring, epoch=None, n_condparam=0, extra_conv_layers=0, discriminator=False, n_last_feat=0):
         print('device:', self.device)
         filepath = self.base_path + '/results/' + timestring
         sizes = np.array([8., 4., 2., 1.])
         print(sizes)
         filen = open(filepath+'/params.txt','r')
         pdict = pickle.load(filen)
-        model = DC_Generator3D_simpler(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes, extra_conv_layers=extra_conv_layers).to(self.device)
+        if n_last_feat > 0:
+            model = DC_Generator3D_last_features(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes, extra_conv_layers=extra_conv_layers, feat_from_end=n_last_feat).to(self.device)
+        else:
+            model = DC_Generator3D_simpler(pdict['ngpu'], 1, pdict['latent_dim']+n_condparam, pdict['ngf'], sizes, extra_conv_layers=extra_conv_layers).to(self.device)
 
         if epoch is None:
             model.load_state_dict(torch.load(filepath+'/netG', map_location=self.device))
@@ -397,10 +405,9 @@ def compute_covariance_matrix(kbins, powerspec_1, powerspec_2):
                                              
     return covariance_matrix   
 
-
 def compute_average_cross_correlation(npairs=100, gen_samples=None, cubedim=64., real_samples=None):
     xcorrs = []
-    kbins = 10**(np.linspace(-1, 2, 30))
+
     for i in xrange(npairs):
 
         if gen_samples is None:
@@ -408,13 +415,13 @@ def compute_average_cross_correlation(npairs=100, gen_samples=None, cubedim=64.,
             reali = real_samples[idxs[0]]-np.mean(real_samples[idxs[0]])
             realj = real_samples[idxs[1]]-np.mean(real_samples[idxs[1]])
 
-            xc, ks = get_power(deltax=reali, boxlength=cubedim, deltax2=realj, log_bins=True)
+            xc, ks = get_power(deltax=reali, boxlength=cubedim, deltax2=realj, log_bins=True, bins=16)
 
         elif real_samples is None:
             idxs = np.random.choice(gen_samples.shape[0], 2, replace=False)
             geni = gen_samples[idxs[0]]-np.mean(gen_samples[idxs[0]])
             genj = gen_samples[idxs[1]]-np.mean(gen_samples[idxs[1]])
-            xc, ks = get_power(geni[0], cubedim, deltax2=genj[0], log_bins=True)
+            xc, ks = get_power(geni[0], cubedim, deltax2=genj[0], log_bins=True, bins=16)
 
         else:
             idxreal = np.random.choice(real_samples.shape[0], 1, replace=False)[0]
@@ -422,27 +429,25 @@ def compute_average_cross_correlation(npairs=100, gen_samples=None, cubedim=64.,
             real = real_samples[idxreal]-np.mean(real_samples[idxreal])
             gen = (gen_samples[idxgen]-np.mean(gen_samples[idxgen]))[0]
 
-            xc, ks = get_power(np.array(real), cubedim, deltax2=np.array(gen), log_bins=True)
+            xc, ks = get_power(np.array(real), cubedim, deltax2=np.array(gen), log_bins=True, bins=16)
 
         xcorrs.append(xc)
 
     return np.array(xcorrs), ks
 
+
 def compute_power_spectra(vols, cubedim=64, inverse_loglike_a=None, unsqueeze=False):
 
     pks, power_kbins = [], []
-    if inverse_loglike_a is not None: # for generated data                             \                   
+    if inverse_loglike_a is not None: # for generated data                             \                                     
 
         vols = inverse_loglike_transform(vols, a=inverse_loglike_a)
-        
+
     if unsqueeze:
-        vols = vols[:,0,:,:,:] # gets rid of single channel                            \                   
-
-
-    kbins = 10**(np.linspace(-1, 2, 30))
+        vols = vols[:,0,:,:,:] # gets rid of single channel                            \                                     
 
     for i in xrange(vols.shape[0]):
-        pk, bins = get_power(vols[i]-np.mean(vols[i]), cubedim, bins=kbins)
+        pk, bins = get_power(vols[i]-np.mean(vols[i]), cubedim, log_bins=True, bins=16)
 
         if np.isnan(pk).all():
             print('NaN for power spectrum')
@@ -450,6 +455,7 @@ def compute_power_spectra(vols, cubedim=64, inverse_loglike_a=None, unsqueeze=Fa
         pks.append(pk)
 
     return np.array(pks), np.array(bins)
+
 
 def compute_matter_bispectrum(vols, cubedim=64, k1=0.1, k2=0.5):
     thetas = np.linspace(0.0, 2.5, 10)
@@ -484,6 +490,10 @@ def summary_plots(nbody, timestr, epoch, nsamp=100,  gen_sigma=1.0, c=None, ncon
     gen, pdict = nbody.restore_generator(timestr, epoch=epoch, n_condparam=ncond, \
                                          discriminator=load_discriminator, extra_conv_layers=extra_conv_layers)
 
+
+    if not pdict.has_key('df'):
+        print('no df key, setting to None')
+        pdict['df'] = None
     print('Model weight norm is ', model_weight_norm(gen))
 
     if print_pdict:
