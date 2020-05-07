@@ -124,6 +124,7 @@ def get_parsed_arguments(dattype):
  samples')
     parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
     parser.add_argument('--df', type=int, default=None, help='degrees of freedom in student-t distribution')
+    parser.add_argument('--gen_sigma', type=float, default=1.0, help='width of normal distribution to sample from during training')
     parser.add_argument('--latent_dim', type=int, default=200, help='size of the latent z vector')
     parser.add_argument('--ngf', type=int, default=32)
     parser.add_argument('--ndf', type=int, default=32)
@@ -131,6 +132,7 @@ def get_parsed_arguments(dattype):
     parser.add_argument('--lr_g', type=float, default=0.0025, help='learning rate of generator, default=0.0025')
     parser.add_argument('--lr_d', type=float, default=0.00001, help='learning rate of discriminator, default=0.0000\
 2')
+    parser.add_argument('--n_last_feat', type=int, default=0, help='if greater than zero, network will give option to get intermediate feature maps')
     parser.add_argument('--b1', type=float, default=0.5, help='adam: decay of first order momentum of gradient')
     parser.add_argument('--b2', type=float, default=0.999, help='adam: decay of first order momentum of gradient')
     parser.add_argument('--acgd', type=bool, default=False, help='enables competitve gradient descent optimizer')
@@ -138,6 +140,7 @@ def get_parsed_arguments(dattype):
     parser.add_argument('--ngpu', type=int, default=4, help='number of GPUs to use')
     parser.add_argument('--netG', default='', help="path to netG (to continue training)")
     parser.add_argument('--netD', default='', help="path to netD (to continue training)")
+    parser.add_argument('--load_epoch', default=143, help='epoch of model to load if resuming training on previous run')
     parser.add_argument('--manualSeed', type=int, help='manual seed')
     parser.add_argument('--schedule', type=bool, default=False, help='set to True for learning rate scheduling throughout training')
     parser.add_argument('--step_size', type=int, default=1000, help='if using LR scheduler, it steps every opt.step_size batches')
@@ -153,7 +156,7 @@ he end of generator network, default 0')
         parser.add_argument('--file_name', default='n512_512Mpc_cosmo1_z0_gridpart.h5')
         parser.add_argument('--datadim', type=int, default=3, help='2 to train on slices, 3 to train on volumes') #not currently functional for 2d                                                                                    
         parser.add_argument('--fac', type=float, default=1.0, help='multiply by this factor when downsampling')
-        parser.add_argument('--loglike_a', type=float, default=None, help='scaling parameter in loglike transformatio\
+        parser.add_argument('--loglike_a', type=float, default=4., help='scaling parameter in loglike transformatio\
 n of data')
         parser.add_argument('--log_scaling', type=bool, default=False, help='use log scaling from HIGAN paper')
         parser.add_argument('--piecewise_scaling', type=bool, default=False, help='use piecewise scaling')
@@ -169,7 +172,7 @@ tor step')
         parser.add_argument('--nseed', type=int, default=1, help='number of seeds to choose from training data')
         parser.add_argument('--nsims', type=int, default=32, help='number of simulation boxes to get samples from')
         parser.add_argument('--n_max_sims', type=int, default=32, help='maximum number of simulations in set, mainly to be used w conditional redshift snapshots')
-        parser.add_argument('--cubedim', type=int, default=128, help='the height / width of the input image to netw\
+        parser.add_argument('--cubedim', type=int, default=64, help='the height / width of the input image to netw\
 ork')
         parser.add_argument('--ds_factor', type=int, default=1, help='specify if downsampling data for coarser resolution')
         parser.add_argument('--lcdm', type=int, default=0, help='number of conditional parameters to use for training. lcdm=1 --> Omega_m, lcdm=2 --> Omega_m + Sigma8')
@@ -197,7 +200,6 @@ def grf_hparam_tests(param_name, vals, imagesize=128, nepochs=20000, trainsize=0
         print(command)
         os.system(command)
     return command_list
-
 
 
 def inverse_loglike_transform(s, a=4):
@@ -258,39 +260,30 @@ def load_in_omegam_s8_sims(opt):
     assert len(sim_boxes)==len(cparam_list)
     return sim_boxes, cparam_list, conds
 
-def load_in_simulations(opt):
+def load_in_simulations(opt, length=512):
     nsims = opt.nsims
     sim_boxes = []
-    length = 512
-
+    
     if opt.redshift_code:
         zlist = [] # array storing the redshift slice of a given volume in sim_boxes                               \
                         
-
         if opt.separate_sims:
             nload = 0
             for j, idx in enumerate(opt.redshift_idxs):
-
-                #istart = nload % opt.n_max_sims
-                #print('istart=', istart)
                 for i in xrange(nsims):
                     print('loading sim', i, 'of', nsims, 'for redshift', opt.redshift_bins[j], 'idx=', nload%opt.n_max_sims +1)
                     with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(nload%opt.n_max_sims + 1)+'_gridpart.h5', 'r') as ofile:
                         sim = ofile["%3.3d"%(idx)][()].copy()
                         sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=opt.redshift_bins[j], loglike_a=opt.loglike_a)
-                        #sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)           
                     nload += 1
         else:
-
             for i in xrange(nsims):
                 print('loading sim ', i, 'of ', nsims)
                 with h5py.File(opt.base_path + 'n512_512Mpc_cosmo1_seed'+str(i+1)+'_gridpart.h5', 'r') as ofile:
                     for j, idx in enumerate(opt.redshift_idxs):
                         sim = ofile["%3.3d"%(idx)][()].copy()
                         sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=opt.redshift_bins[j], loglike_a=opt.loglike_a)
-                        #sim_boxes, zlist = partition_cube(sim, length, opt.cubedim, sim_boxes, cparam_list=zlist, cond=[opt.redshift_bins[j]], loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)
-        #print('zlist:')
-        #print(zlist)
+
         return np.array(sim_boxes), np.array(zlist)
     else:
         for i in xrange(nsims):
@@ -299,10 +292,6 @@ def load_in_simulations(opt):
                 sim = ofile["%3.3d"%(opt.single_z_idx)][()].copy()
                 sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a, ds_factor=opt.ds_factor, fac=opt.fac)
             ofile.close()
-#with h5py.File(opt.base_path + opt.file_name, 'r') as ofile:
-#            for i in xrange(nsims):
-#                sim = ofile['seed'+str(i+1)][()].copy()
-#                sim_boxes = partition_cube(sim, length, opt.cubedim, sim_boxes, loglike_a=opt.loglike_a)
 
         return np.array(sim_boxes)
 

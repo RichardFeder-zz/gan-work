@@ -704,4 +704,3 @@ def discriminator_rejection_sampling(generator, discriminator, pdict, df=None, s
     print('Mean acceptance fraction is ', np.mean(accept_frac))
     
     return np.array(gen_samps), np.array(z_samps)
-

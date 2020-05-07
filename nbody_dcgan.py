@@ -6,8 +6,7 @@ import os
 import random
 import torch
 torch.backends.cudnn.benchmark = True
-from optimizers import ACGD
-#from cgd_utils import zero_grad
+from optimizers import ACGD # not used
 import time
 import torch.nn as nn
 import torch.nn.parallel
@@ -44,48 +43,33 @@ if opt.lcdm > 0:
 
 opt.n_cond_params = n_cond_params
 
+# this dictates the number of ilters in each layer, multiplied by ngf or ndf (number of generator filters/number of discriminator filters)
 sizes = np.array([8,4,2,1])
 
 #redshift_bins = np.array([1., 0.5, 0.25, 0.])
 #redshift_strings = np.array(['006', '007', '008', '009'])
-
 redshift_strings = np.array(['003', '005', '007', '009'])
 redshift_bins = np.array([3., 1.5, 0.5, 0.])
-
-
 #redshift_bins = np.array([2., 1., 0.])
-
 #redshift_bins = np.array([0.5, 0.25, 0.])*opt.cond_scale_fac
 #redshift_strings = np.array(['007', '008', '009'])
 
-cond_bins = np.array([[[0.801, 0.28724518], [0.801, 0.3132452],  [0.801, 0.3392452 ]],
-             [[0.829, 0.28724518], [0.829, 0.3132452 ], [0.829, 0.3392452 ]],
-             [[0.857, 0.28724518], [0.857, 0.3132452 ], [0.857, 0.3392452 ]]])
-
-
 age_bins = cosmo.age(redshift_bins)/cosmo.age(0)
 print('age bins:', age_bins)
-#redshift_strings = np.array(['003', '005','007', '009'])
-#redshift_strings = np.array(['004','006','009'])
-#redshift_bins = np.array([5., 3., 1., 0.5, 0.])
-#redshift_strings = np.array(['002', '003', '006', '007', '009'])
-#redshift_bins = np.array([10., 7.5, 5., 3., 2., 1.5, 1., 0.5, 0.25, 0.]) 
-#redshift_strings = np.array(["%3.3d"%(i) for i in xrange(len(redshift_bins))])
 
 if opt.redshift_code:
     if opt.age_bins:
         print('using fractional ages instead of redshifts')
         opt.redshift_bins = age_bins
-        #conds = age_bins
     else:
         opt.redshift_bins=redshift_bins
-        #conds = redshift_bins
+
     opt.redshift_idxs = np.array([int(r) for r in redshift_strings])
     output1shape = (opt.cubedim/(2*opt.ds_factor), opt.cubedim/(2*opt.ds_factor), opt.cubedim/(2*opt.ds_factor)) # for conditional feature maps in discriminator 
     print('Redshifts:', redshift_bins)
-    #print('Conditional values:', conds)
     print('Redshift strings:', redshift_strings)
     print('Redshift idxs:', opt.redshift_idxs)
+
 else:
     opt.redshift_bins=[]
     opt.redshift_idxs=[]
@@ -114,8 +98,9 @@ if opt.netG=='':
     netG.apply(weights_init)
     netD.apply(weights_init)
 else:
-    netG.load_state_dict(torch.load(richard_workdir+opt.netG+'/netG_epoch_29', map_location=device))
-    netD.load_state_dict(torch.load(richard_workdir+opt.netG+'/netD_epoch_29', map_location=device))
+    print('loading models from', opt.netG, ' from epoch', opt.load_epoch)
+    netG.load_state_dict(torch.load(richard_workdir+opt.netG+'/netG_epoch_'+str(opt.load_epoch), map_location=device))
+    netD.load_state_dict(torch.load(richard_workdir+opt.netG+'/netD_epoch_'+str(opt.load_epoch), map_location=device))
     netG.train()
     netD.train()
 
@@ -156,13 +141,7 @@ class GAN_optimization():
         self.netD = netD
         self.netG = netG
         self.criterion = criterion
-        
-        #if cond_params is None:
-        #    self.cond_params = cond_params
-        #else:
-        #    self.cond_params = np.array(cond_params)
-        #self.conds = np.array(conds)
-        
+                
         if opt.trainSize > 0:
             self.batchSize = np.minimum(opt.trainSize, opt.batchSize)
         else:
@@ -172,30 +151,40 @@ class GAN_optimization():
         if schedulerG is not None:
             self.schedulerG = schedulerG
 
-    def draw_latent_z(self, latent_dim, device, redshifts=None, fixed_c=None, df=None):
+    def draw_latent_z_simple(self, latent_dim, device, df=None, sigma=1.0):
         if df is not None:
-            noise = torch.distributions.StudentT(df=df).rsample(sample_shape=(self.batchSize, latent_dim, 1, 1, 1)).float().to(device)
+            noise = torch.distributions.StudentT(df=df, scale=sigma).rsample(sample_shape=(self.batchSize, latent_dim, 1, 1, 1)).float().to(device)
         else:
-            noise = torch.randn(self.batchSize, latent_dim, 1, 1, 1, device=device)
+            noise = sigma*torch.randn(self.batchSize, latent_dim, 1, 1, 1, device=device)
+
+        return noise
+
+    def draw_latent_z(self, latent_dim, device, redshifts=None, fixed_c=None, df=None, sigma=1.0):
+        if df is not None:
+            noise = torch.distributions.StudentT(df=df, scale=sigma).rsample(sample_shape=(self.batchSize, latent_dim, 1, 1, 1)).float().to(device)
+        else:
+            noise = sigma*torch.randn(self.batchSize, latent_dim, 1, 1, 1, device=device)
+    
+        if zs is not None:
+            fake_zs = np.random.choice(redshift_bins, opt.batchSize)
+            noise = torch.cat((noise, torch.from_numpy(fake_zs).float().view(-1,1,1,1,1).to(device)), 1)
+
         if self.cond_params is not None:
-            #print('cond params is not None, self.conds is ', self.conds)
             if fixed_c is not None:
                 c = np.repeat([fixed_c], opt.batchSize, axis=0)
             else:
                 cidx = np.random.choice(np.arange(len(self.conds)), opt.batchSize)
                 c = self.conds[cidx]
-            #print(np.max(c), np.min(c))
             noise = torch.cat((noise, torch.from_numpy(c).float().view(-1,1,1,1,1).to(device)),1)
             return noise, c
         return noise, None
 
-    def acgd_step(self, real_cpu, c=None, zs=None, df=None):
+    def acgd_step(self, real_cpu, c=None, zs=None, df=None): # does not work 
         label = torch.full((self.batchSize,), real_label, device=device)
         real_cpu = torch.unsqueeze(real_cpu, 1).float()
         d_real = self.netD(real_cpu, cond=c)
         loss_real = self.criterion(d_real, label)
         noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
-        print('c:', c)
         fake = self.netG(noise)
         label.fill_(fake_label)
         d_fake = self.netD(fake.detach(), cond=c)
@@ -206,7 +195,7 @@ class GAN_optimization():
         
         return loss_real, loss_fake
 
-    def discriminator_step(self, real_cpu, disc_opt=False, zs=None, df=None):
+    def discriminator_step(self, real_cpu, disc_opt=False, zs=None, df=None, sigma=1.0):
         self.netD.zero_grad()
         
         label = torch.full((self.batchSize,), real_label, device=device)
@@ -221,8 +210,9 @@ class GAN_optimization():
         D_x = output.mean().item()
 
         # train with fake
-        #noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
-        noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, 1, device=device)
+        
+        noise = self.draw_latent_z_simple(opt.latent_dim, device, df=df, sigma=sigma)
+        
         if zs is not None:
             fake_zs = np.random.choice(redshift_bins, opt.batchSize)
             noise = torch.cat((noise, torch.from_numpy(fake_zs).float().view(-1,1,1,1,1).to(device)), 1)
@@ -232,7 +222,7 @@ class GAN_optimization():
         if zs is not None:
             output = self.netD(fake.detach(), zfeatures=make_feature_maps(fake_zs, output1shape, device))
         else:
-            output = self.netD(fake.detach(), cond=c)
+            output = self.netD(fake.detach())
         
         errD_fake = self.get_loss(output, opt, label=label)
         errD_fake.backward()
@@ -262,15 +252,13 @@ class GAN_optimization():
 
     def get_loss(self, output, opt, label=None):
         if opt.wgan:
-            return self.criterion(output, label)
-            #return output.mean()
+            return output.mean()
         else:
             return self.criterion(output, label)
 
-    def generator_step(self, zs=None, df=None):
+    def generator_step(self, zs=None, df=None, sigma=1.0):
         
-        #noise, c = self.draw_latent_z(opt.latent_dim, device, df=df)
-        noise = torch.randn(self.batchSize, opt.latent_dim, 1, 1, 1, device=device)
+        noise = self.draw_latent_z_simple(opt.latent_dim, device, df=df, sigma=sigma)
         if zs is not None:
             fake_zs = np.random.choice(redshift_bins, opt.batchSize)
             noise = torch.cat((noise, torch.from_numpy(fake_zs).float().view(-1,1,1,1,1).to(device)), 1)
@@ -284,7 +272,7 @@ class GAN_optimization():
             output = self.netD(fake, zfeatures=make_feature_maps(fake_zs, output1shape, device))
         else:
             output = self.netD(fake)
-        #output = self.netD(fake, cond=c)        
+        
         errG = self.get_loss(output, opt, label=label)
         errG.backward()
         gnorm = compute_gradient_norm(self.netG)
@@ -292,14 +280,14 @@ class GAN_optimization():
         self.optimizerG.step()
         return errG, D_G_z2, gnorm
 
-    def single_train_step(self, real_cpu, disc_opt=False, zs=None, df=None):
+    def single_train_step(self, real_cpu, disc_opt=False, zs=None, df=None, sigma=1.0):
         if opt.acgd:
             loss_real, loss_fake = self.acgd_step(real_cpu, zs=zs, c=cparams, df=df)
             return loss_real, loss_fake
         else:
-            errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, disc_opt=disc_opt, zs=zs, df=df)
+            errD, D_x, D_G_z1, dnorm = self.discriminator_step(real_cpu, disc_opt=disc_opt, zs=zs, df=df, sigma=sigma)
             for i in xrange(opt.n_genstep):
-                errG, D_G_z2, gnorm = self.generator_step(zs=zs, df=df)
+                errG, D_G_z2, gnorm = self.generator_step(zs=zs, df=df, sigma=sigma)
             if opt.get_optimal_discriminator:
                 return errD, D_x, D_G_z1, dnorm
             return errD, errG, D_x, D_G_z1, D_G_z2, gnorm, dnorm
@@ -321,29 +309,14 @@ def training_epoch(opt, ganopt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms
 
         if opt.redshift_code:
             zs = cparam_list[choice]
-            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs)
+            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, zs=zs, sigma=opt.gen_sigma)
         else:
-            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu)
+            if opt.get_optimal_discriminator:
+                errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, disc_opt=disc_opt, sigma=opt.gen_sigma)
+            else:
+                errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, sigma=opt.gen_sigma)
 
 
-
-        #if cparam_list is not None:
-        #    cparams = cparam_list[choice]
-        #    if opt.get_optimal_discriminator:
-        #        errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, cparams=cparams, disc_opt=disc_opt, df=opt.df)
-        #    else:
-        #        if opt.acgd:
-        #            loss_real, loss_fake = ganopt.single_train_step(real_cpu, cparams=cparams, df=opt.df)
-        #        else:
-        #            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, cparams=cparams, df=opt.df)
-        #else:
-        #    if opt.get_optimal_discriminator:
-        #        errD, D_x, D_G_z1, dn = ganopt.single_train_step(real_cpu, disc_opt=disc_opt, df=opt.df)
-        #    else:
-        #        if opt.acgd:
-        #            loss_real, loss_fake = ganopt.single_train_step(real_cpu, df=opt.df)
-        #        else:
-        #            errD, errG, D_x, D_G_z1, D_G_z2, gn, dn = ganopt.single_train_step(real_cpu, df=opt.df)
         if opt.get_optimal_discriminator:
             print('errD:', errD.item(), 'D_G_z1:', D_G_z1, 'Dnorm:', dn)
         elif opt.acgd:
@@ -351,7 +324,6 @@ def training_epoch(opt, ganopt, epoch, sim_boxes, lossGs, lossDs, gnorms, dnorms
             lossDs.append(loss_real.item())
             print('loss_real', loss_real.item(), 'loss_fake:', loss_fake)
         else:
-            #print('errG:', errG.item(),'errD:', errD.item(), 'D_G_z1:', D_G_z1, 'Gnorm:', gn, 'Dnorm:',dn)
             print('errG:', np.round(errG.item(), 3),'errD:', np.round(errD.item(), 3), 'D_G_z1:', np.round(D_G_z1, 3), 'Gnorm:', np.round(gn, 3), 'Dnorm:',np.round(dn, 3))
             assert errG.item() != 0.0 # these make sure we're not falling into mode collapse or an outperforming discriminator
             gnorms.append(gn)

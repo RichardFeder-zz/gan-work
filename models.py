@@ -1,4 +1,3 @@
-
 from torch.autograd import Variable, grad
 import torch.nn as nn
 import torch
@@ -277,11 +276,12 @@ class DC_Discriminator3D(nn.Module):
         return output.view(-1, 1).squeeze(1)
 
 
+
 class DC_Generator3D_simpler(nn.Module):
     def __init__(self, ngpu, nc, nz, ngf, sizes, extra_conv_layers=0, endact='tanh'):
         super(DC_Generator3D_simpler, self).__init__()
         self.ngpu = ngpu
-        layers = []
+        self.layers = []
 
         kernel_sizes = [4, 4, 4, 4]
         strides = [1, 2, 2, 2]
@@ -289,31 +289,37 @@ class DC_Generator3D_simpler(nn.Module):
         
         for i, size in enumerate(sizes):
             if i==0:
-                layers.append(nn.ConvTranspose3d(nz, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
+                self.layers.append(nn.ConvTranspose3d(nz, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
             else:
-                layers.append(nn.ConvTranspose3d(outc, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
+                self.layers.append(nn.ConvTranspose3d(outc, ngf*int(size), kernel_sizes[i], strides[i], paddings[i], bias=False) )
             outc = ngf*int(size)
-            layers.append(nn.BatchNorm3d(outc))
-            layers.append(nn.ReLU(True))
+            self.layers.append(nn.BatchNorm3d(outc))
+            self.layers.append(nn.ReLU(True))
 
         for i in xrange(extra_conv_layers):
-            layers.append(nn.ConvTranspose3d(outc, outc, 3, stride=1, padding=1, bias=False)) # extra layer
-            layers.append(nn.BatchNorm3d(outc))
-            layers.append(nn.ReLU(True))
+            self.layers.append(nn.ConvTranspose3d(outc, outc, 3, stride=1, padding=1, bias=False)) # extra layer
+            self.layers.append(nn.BatchNorm3d(outc))
+            self.layers.append(nn.ReLU(True))
 
-        layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
-        #layers.append(nn.ConvTranspose3d(outc, nc, 2, stride=2, padding=0, bias=False))
+        self.layers.append(nn.ConvTranspose3d(outc, nc, 4, stride=2, padding=1, bias=False))
+        
         if endact=='tanh': 
-            layers.append(nn.Tanh())
+            self.layers.append(nn.Tanh())
         elif endact=='softplus':
-            layers.append(nn.Softplus())
-        self.main = nn.Sequential(*layers)
+            self.layers.append(nn.Softplus())
+        self.main = nn.Sequential(*self.layers)
 
-    def forward(self, input):
+    def forward(self, input, feat_from_last=0):
         if input.is_cuda and self.ngpu > 1:
-            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+            if feat_from_last > 0:
+                out1 = nn.parallel.data_parallel(nn.Sequential(*self.layers[:-2-3*(feat_from_last-1)]), input, range(self.ngpu))
+                output = nn.parallel.data_parallel(nn.Sequential(*self.layers[-2-3*(feat_from_last-1):]), out1, range(self.ngpu))
+            else:
+                output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:
             output = self.main(input)
+        if feat_from_last > 0:
+            return out1, output
         return output
 
 class DC_Discriminator3D_simpler(nn.Module):
@@ -348,14 +354,11 @@ class DC_Discriminator3D_simpler(nn.Module):
         self.main = nn.Sequential(*layers)
         self.first = nn.Sequential(*first_layer)
 
-    def forward(self, input, cond=None):
+    def forward(self, input, zfeatures=None):
         if input.is_cuda and self.ngpu > 1:
             output1 = nn.parallel.data_parallel(self.first, input, range(self.ngpu))
-            if cond is not None:
-                cond_features = make_feature_maps(cond, output1[0,0,:,:,:].shape, self.device)
-                #print('cond features:', cond_features[1,:])
-                #print(torch.max(cond_features), torch.min(cond_features))
-                output1 = torch.cat((output1, cond_features), 1)
+            if zfeatures is not None:
+                output1 = torch.cat((output1, zfeatures), 1)
             output = nn.parallel.data_parallel(self.main, output1, range(self.ngpu))
             
         else:  

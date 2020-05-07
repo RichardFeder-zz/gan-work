@@ -1,4 +1,4 @@
-import matplotlib as mpl
+import matplotlib as mpwplol
 import matplotlib.pyplot as plt
 import os
 from matplotlib import cm
@@ -127,7 +127,33 @@ def plot_diag(base_path, timestring, mode='grad_norm', epoch=None, save=False, s
         plt.show()
     return f
 
-def plot_bispectra_rf(k1, k2, genbks=[], thetas=[], labels=[], colors=['royalblue', 'darkgreen', 'darkslategrey'], reallabel='GADGET-2', realbk=None, realthetabins=[],timestr=None, \
+
+def plot_data_scalings(mode='loglike', a_range=[1, 4, 10, 50], eps=None, lin=None, show=True, cmap=None, title='$s(x)=\\frac{2x}{x+a}-1$'):
+    colors = cmap
+    if cmap is None:
+        colors = plt.cm.YlGnBu(np.linspace(0.5,1.0,len(a_range)))
+
+    f = plt.figure()
+    if mode=='loglike':
+        plt.title(title, fontsize=14)
+        for i, a in enumerate(a_range):
+            plt.plot(lin, loglike_transform(lin, a=a), label='$\\kappa=$'+str(a), color=colors[i])
+    elif mode=='higan':
+        plt.title('Log scaling $s(x) = \\frac{\\log_{10} x + \\epsilon}{\\log_{10} x_{max} + \\epsilon}')
+        for e in eps:
+            plt.plot(log_transform_HI(lin, eps=e), lin, label=str(e))
+
+    plt.legend()
+    plt.xscale('log')
+    plt.ylabel('Scaled density $c$', fontsize=14)
+    plt.xlabel('Matter density $\\widetilde{\\rho}$ [$10^{10}M_{\\odot}$/cell]', fontsize=14)
+    if show:
+        plt.show()
+
+    return f
+
+def plot_bispectra_rf(k1, k2, genbks=[], thetas=[], labels=[], colors=['royalblue', 'darkgreen', 'darkslategrey'], reallabel='GADGET-2',\
+                      realbk=None, realthetabins=[],timestr=None, \
                     z=None, title=None, legend=True, mode='median', ymin=1.5e5, ymax=1.5e7, \
                     realcolor='forestgreen', realfillcolor='limegreen', alpha_real=0.45, alpha_gen=0.1, \
                     reallinewidth=2., genlinewidth=2., legend_fs=14, k_fs=12, label_fs=14, figsize=(8,6), \
@@ -204,13 +230,11 @@ def plot_bispectra_rf(k1, k2, genbks=[], thetas=[], labels=[], colors=['royalblu
     plt.xlabel('$\\theta$ [radian]', fontsize=label_fs)
     plt.ylabel('$B(\\theta)$ $[h^{-6} Mpc^6]$', fontsize=label_fs)
     plt.yscale('log')
-#         ax.tick_params(which='major', width=1.5, length=4, labelsize=12)
 
     plt.tick_params(width=1.5,length=3, labelsize=12)
     if ymin is not None:
         plt.ylim(ymin, ymax)
-#         plt.text(0.1, 10**(np.log10(ymax)-0.35),'$k_1=$'+str(k1), fontsize=k_fs)
-#         plt.text(0.1, 10**(np.log10(ymax)-0.6),'$k_2=$'+str(k2), fontsize=k_fs)
+
 
     plt.tight_layout()
     plt.show()
@@ -344,101 +368,6 @@ def plot_powerspectra_rf(genpks=[], genkbins=[], labels=[],reallabel='GADGET-2',
     
     return fig
 
-def plot_voxel_pdf_rf(real_vols=None, gen_vols=None, nbins=49, mode='scaled', \
-                    timestr=None, epoch=None, reallabel='GADGET-2', genlabels=['GAN'], realcolor='green', gencolors=['b', 'r\
-oyalblue'], \
-                    show=True, capsize=5, return_fig_content=False, fig_content_file=None, reallinewidth=1, realcapthick=1, \
-                     genlinewidth=1., gencapthick=1., legend=True):
-
-
-    f = plt.figure()
-    
-    if fig_content_file is not None:
-        
-        pkl_file = open(fig_content_file, 'rb')
-        fig_content = pickle.load(pkl_file)
-        pkl_file.close()
-
-        midbins = fig_content['midbins']
-        realmeanhist = fig_content['realmeanhist']
-        realstdhist = fig_content['realstdhist']
-        genmeanhists = fig_content['genmeanhists']
-        genstdhists = fig_content['genstdhists']
-        
-    else:
-        if mode=='scaled':
-            bins = np.linspace(-1, 1, nbins+1)
-        else:
-            bins = 10**(np.linspace(-4, 4, nbins+1))
-
-        midbins = 0.5*(bins[1:]+bins[:-1])
-    
-        if return_fig_content:
-            genmeanhists = []
-            genstdhists = []
-            
-
-        if real_vols is not None:
-
-            voxel_hists = np.array([np.histogram(real_vols[i], bins=bins)[0] for i in range(real_vols.shape[0])])
-            realmeanhist = np.mean(voxel_hists, axis=0)/real_vols.shape[0]
-            realstdhist = np.std(voxel_hists, axis=0)/real_vols.shape[0]
-            
-            print('realstdhist:', realstdhist)
-        
-        if gen_vols is not None:
-
-            if real_vols is not None:
-                binz = bins
-            else:
-                binz = nbins
-
-            for k in range(len(gen_vols)):
-
-                gen_voxel_hists = np.array([np.histogram(gen_vols[k][i], bins=bins)[0] for i in range(gen_vols[k].shape[0])])
-
-                genmeanhist = np.mean(gen_voxel_hists, axis=0)/gen_vols[k].shape[0]
-                genstdhist = np.std(gen_voxel_hists, axis=0)/gen_vols[k].shape[0]
-
-                if return_fig_content:
-                    genmeanhists.append(genmeanhist)
-                    genstdhists.append(genstdhist)
-    
-    if realmeanhist is not None:
-        plt.errorbar(midbins, realmeanhist, yerr=realstdhist, label=reallabel, color=realcolor, capsize=capsize, linewidth=reallinewidth, capthick=realcapthick)
-    
-            
-    if genmeanhists is not None:
-        for k, genmeanhist in enumerate(genmeanhists):
-            plt.errorbar(midbins, genmeanhist, yerr=genstdhists[k], capthick=gencapthick, linewidth=genlinewidth, label=genlabels[k], color=gencolors[k], capsize=capsize)
-
-    plt.yscale('log')
-
-    if mode=='scaled':
-        plt.xlabel('Scaled Density $c(x)$', fontsize='large')
-    else:
-        plt.xlabel('$\\rho/\overline{\\rho}_{particle}$', fontsize='large')
-        plt.xscale('log')
-    
-    if legend:
-        plt.legend(fontsize='large', frameon=False, loc=1)
-    
-    plt.ylabel('Normalized Counts', fontsize='large')
-
-    if timestr is not None:
-        plt.savefig('figures/gif_dir/'+timestr+'/voxel_pdf_epoch'+str(epoch)+'.pdf', bbox_inches='tight')
-    if show:
-        plt.show()
-
-
-    if return_fig_content:
-        fig_content = dict({'midbins':midbins, 'realmeanhist':realmeanhist, 'realstdhist':realstdhist, 'genmeanhists':genmeanhists, \
-                        'genstdhists':genstdhists})
-        
-        return f, fig_content
-
-    return f
-
 
 def plot_corr_cov_matrices_rf(real=None, gen=None, mode='cov', \
                            real_title = 'GADGET-2 Simulations', \
@@ -545,7 +474,6 @@ def plot_corr_cov_matrices_rf(real=None, gen=None, mode='cov', \
         return f, fig_content
     
     return f
-
 
 def plot_comp_resources(timearray, directory):
 
@@ -679,7 +607,6 @@ def plot_cross_spectra_rf(real_xcorr=None, gen_xcorr=None, real_gen_xcorr=None, 
         
         if len(mean_real_gen_xcs) > 0:
             plt.plot(bins, bins**3*mean_real_gen_xcs[i], marker='.', label=crosslabel, color=gencolors[i], linestyle='dashed')
-    #         plt.fill_between(bins, bins**3*real_gen_xcs_16[i], bins**3*real_gen_xcs_84[i], alpha=0.1, color='m')
             plt.plot(bins, bins**3*real_gen_xcs_16[i], linewidth=linewidth, color=gencolors[i], linestyle='dashed')
             plt.plot(bins,  bins**3*real_gen_xcs_84[i], linewidth=linewidth, color=gencolors[i], linestyle='dashed')
     
@@ -701,7 +628,6 @@ def plot_cross_spectra_rf(real_xcorr=None, gen_xcorr=None, real_gen_xcorr=None, 
         return f, fig_content
     
     return f
-
 
 
 def plot_powerspec_and_field(k, power_interpolation, best_fit, field):
@@ -777,9 +703,10 @@ def plot_average_density_hist_rf(avmass_real=None, avmass_gens=None, show=True,\
             plt.hist(np.log10(avmass), bins=bins, label=labels[i], color=colors[i],linewidth=linewidth, alpha=alpha_gen, density=True, histtype='step')
             if median_lines:
                 plt.axvline(np.median(np.log10(avmass)), color=colors[i], linestyle='dashed')
-    plt.xlabel('$\\log_{10}(\overline{\\rho}_{subvolume}/\overline{\\rho}_{particle})$', fontsize='large')
+    plt.xlabel('$\\log_{10}(\overline{\\rho}_{subvolume})$', fontsize='large')
+    
     plt.legend(frameon=False, fontsize=11)
-    plt.ylabel('Probablility Density', fontsize='large')
+    plt.ylabel('Probablility density', fontsize='large')
 
     if show:
         plt.show()
@@ -790,7 +717,6 @@ def plot_average_density_hist_rf(avmass_real=None, avmass_gens=None, show=True,\
         return f, fig_content
 
     return f
-
 
 def plot_network_weights(gen, minp=-2.0, maxp=2.0, nbin=50):
     params = []
@@ -804,6 +730,99 @@ def plot_network_weights(gen, minp=-2.0, maxp=2.0, nbin=50):
     plt.show()
     return f
 
+def plot_voxel_pdf_rf(real_vols=None, gen_vols=None, nbins=49, mode='scaled', \
+                    timestr=None, epoch=None, reallabel='GADGET-2', genlabels=['GAN'], realcolor='green', gencolors=['b', 'royalblue'], \
+                    show=True, capsize=5, return_fig_content=False, fig_content_file=None, reallinewidth=1, realcapthick=1, \
+                     genlinewidth=1., gencapthick=1., legend=True):
+
+
+    f = plt.figure()
+    
+    if fig_content_file is not None:
+        
+        pkl_file = open(fig_content_file, 'rb')
+        fig_content = pickle.load(pkl_file)
+        pkl_file.close()
+
+        midbins = fig_content['midbins']
+        realmeanhist = fig_content['realmeanhist']
+        realstdhist = fig_content['realstdhist']
+        genmeanhists = fig_content['genmeanhists']
+        genstdhists = fig_content['genstdhists']
+        
+    else:
+        if mode=='scaled':
+            bins = np.linspace(-1, 1, nbins+1)
+        else:
+            bins = 10**(np.linspace(-4, 4, nbins+1))
+
+        midbins = 0.5*(bins[1:]+bins[:-1])
+    
+        if return_fig_content:
+            genmeanhists = []
+            genstdhists = []
+            
+
+        if real_vols is not None:
+
+            voxel_hists = np.array([np.histogram(real_vols[i], bins=bins)[0] for i in range(real_vols.shape[0])])
+            realmeanhist = np.mean(voxel_hists, axis=0)/real_vols.shape[0]
+            realstdhist = np.std(voxel_hists, axis=0)/real_vols.shape[0]
+            
+            print('realstdhist:', realstdhist)
+        
+        if gen_vols is not None:
+
+            if real_vols is not None:
+                binz = bins
+            else:
+                binz = nbins
+
+            for k in range(len(gen_vols)):
+
+                gen_voxel_hists = np.array([np.histogram(gen_vols[k][i], bins=bins)[0] for i in range(gen_vols[k].shape[0])])
+
+                genmeanhist = np.mean(gen_voxel_hists, axis=0)/gen_vols[k].shape[0]
+                genstdhist = np.std(gen_voxel_hists, axis=0)/gen_vols[k].shape[0]
+
+                if return_fig_content:
+                    genmeanhists.append(genmeanhist)
+                    genstdhists.append(genstdhist)
+    
+    if realmeanhist is not None:
+        plt.errorbar(midbins, realmeanhist, yerr=realstdhist, label=reallabel, color=realcolor, capsize=capsize, linewidth=reallinewidth, capthick=realcapthick)
+    
+            
+    if genmeanhists is not None:
+        for k, genmeanhist in enumerate(genmeanhists):
+            plt.errorbar(midbins, genmeanhist, yerr=genstdhists[k], capthick=gencapthick, linewidth=genlinewidth, label=genlabels[k], color=gencolors[k], capsize=capsize)
+
+    plt.yscale('log')
+
+    if mode=='scaled':
+        plt.xlabel('Scaled density $c(x)$', fontsize='large')
+    else:
+        plt.xlabel('Matter density $\\widetilde{\\rho}$ [$10^{10} M_{\\odot}/$cell]', fontsize='large')
+        plt.xscale('log')
+    
+    if legend:
+        plt.legend(fontsize='large', frameon=False, loc=1)
+    
+    plt.ylabel('Normalized counts', fontsize='large')
+
+    if timestr is not None:
+        plt.savefig('figures/gif_dir/'+timestr+'/voxel_pdf_epoch'+str(epoch)+'.pdf', bbox_inches='tight')
+    if show:
+        plt.show()
+
+
+    if return_fig_content:
+        fig_content = dict({'midbins':midbins, 'realmeanhist':realmeanhist, 'realstdhist':realstdhist, 'genmeanhists':genmeanhists, \
+                        'genstdhists':genstdhists})
+        
+        return f, fig_content
+
+    return f
 
 
 def plot_volume_multiple_z(gen, minz=0.0, maxz=3.0, nz=8, latent_dim=200, npoints=300000, thresh=-0.95, cmap='winter'):
@@ -1081,4 +1100,33 @@ def plot_redshift_two_panel_rf(reds=[0.0], zstrs=None, return_fig_content=False,
         fig_content = dict({'gadget_samples':gadget_samples,'kbin':kbin, 'median_pks':median_pks, 'gfacs':gfacs, 'reds':reds, 'zstrs':zstrs})
         return f, fig_content
 
+    return f
+
+def plot_latent_z_distribution_rf(gan_norms=None, drs_norms=None, return_fig_content=False, fig_content_file=None, \
+                                 linewidth=2, hist_alpha=0.5):
+    
+    if fig_content_file is not None:
+        pkl_file = open(fig_content_file, 'rb')
+        print(pkl_file)
+        fig_content = pickle.load(pkl_file)
+        pkl_file.close()  
+        
+        gan_norms = fig_content['gan_norms']
+        drs_norms = fig_content['drs_norms']
+    
+    f = plt.figure()
+    
+    _, bins, _ = plt.hist(gan_norms, bins=25, histtype='stepfilled', alpha=hist_alpha, label='GAN', density=True, linewidth=linewidth, color='royalblue')
+    plt.axvline(np.median(gan_norms), linestyle='dashed', color='darkblue', linewidth=linewidth)
+    plt.hist(drs_norms, bins=bins, histtype='stepfilled', label='GAN+DRS', linewidth=linewidth, density=True, color='purple', alpha=hist_alpha)
+    plt.axvline(np.median(drs_norms), linestyle='dashed', color='purple', linewidth=linewidth)
+
+    plt.legend()
+    plt.xlabel('$|\\vec{z}|_2$', fontsize=14)
+    plt.ylabel('Probability density', fontsize=14)
+
+    if return_fig_content:
+        fig_content = dict({'gan_norms':np.array(gan_norms), 'drs_norms':np.array(drs_norms)})
+        
+        return f, fig_content
     return f
